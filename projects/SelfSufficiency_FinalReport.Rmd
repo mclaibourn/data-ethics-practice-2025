@@ -1,0 +1,1059 @@
+---
+title: "Self Sufficiency Final Report"
+author: "Jacob Moore, Jaynae Wright, Mariama Mohamed Sani, Justice Demby"
+date: "2025-05-01"
+output: 
+  html_document:
+    theme: united
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+<style>
+h1.title {
+  background-color: #ed5802;
+  color: white;
+  padding: 15px;
+  text-align: center;
+  font-size: 2em;
+  border-radius: 4px;
+}
+</style>
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r libraries}
+# Load libraries
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(ggforce)
+library(kableExtra)
+library(DT)
+library(janitor)
+library(ggalt)
+```
+
+### Data
+
+```{r individual 5 year}
+# Read data ----
+cvl_person_5yr <- read_csv("../data/cvl_acspums_person_5year.csv") %>% 
+  # cleaning the names from the csv
+  clean_names()
+#2788 observations
+``` 
+
+```{r household 5 year}
+# loading in 5-year pums data for cville
+cvl_house_5yr <- read_csv("../data/cvl_acspums_household_5year.csv") %>% 
+  # cleaning the names from the csv
+  clean_names()
+
+# removing vacant/institutional housing
+cvl_house_5yr <- cvl_house_5yr %>% 
+  filter(typehugq == 1, is.na(vacs)) 
+
+# generate variables for number of adults, number of children
+# and reduce/combine to match famtype (in mit) or family (in epi)
+cvl_house_5yr <- cvl_house_5yr %>% 
+  # number of people in household minus number of related children in household
+  mutate(adults = np - nrc, # 1 to 7
+         children = nrc, # 0 to 7
+         # limit # adults to 2 (if > 2, treat as 2)
+         adult_reduced = ifelse(adults > 2, 2, adults),
+         # limit # children to 3 (to match famtype in mit)
+         children_reduced3 = if_else(children > 3, 3, children),
+         # limit # children to 4 (to match family in epi)
+         children_reduced4 = if_else(children > 4, 4, children),
+         famtype = paste0("a", adult_reduced, "c", children_reduced3),
+         family = paste0(adult_reduced, "p", children_reduced4, "c"))
+```
+
+```{r mit data}
+# special thanks and credit to Professor Claibourn for providing us with code to join the self sufficiency data and PUMS data
+
+# loading in mit living wage standards
+# data currently has one observation for each family combination
+mit <- read_csv("../data/cvlregion_mitlivingwagestandards.csv")
+
+# altering the mit data so that family types only include number of adults and number of children
+# essentially removing distinctions between how many adults in each household work
+mit <- mit %>% 
+  mutate(famtype = str_remove(famtype, "w[0-9]"))
+
+# reshaping the dataset to longer
+mit <- mit %>% 
+  pivot_longer(-famtype, names_to = "county", values_to = "income") %>% 
+  # grouping by famtype
+  group_by(famtype) %>% 
+  # aggregating data for different Charlottesville area counties
+  summarize(income = (min(income) + max(income))/2) %>% # midpoint of range for each family type
+  ungroup()
+```
+
+```{r epi data}
+# loading in economic policy institute data
+epi <- read_csv("../data/cvlregion_epi_familybudget.csv")
+
+# grouping by family type
+epi <- epi %>% 
+  group_by(family) %>% 
+  # aggregating standards for the region as a whole
+  summarize(budget = (min(total) + max(total))/2) %>% # midpoint of range for each family type
+  ungroup()
+```
+
+# Introduction {.tabset}
+
+This report seeks to investigate economic self sufficiency in the Greater Charlottesville region by leveraging **American Community Survey** data from the **US Census Bureau**. It employs two independently developed measures of economic self sufficiency, developed by the **Economic Policy Institute (EPI)** and the **Massachusetts Institute of Technology MIT)**, to uncover the interplay between race, gender, age, and educational attainment. 
+
+Overall, we seek to apply various measures of **economic self-sufficiency** with local data to explore how the region’s residents with diverse lived experiences have various degrees of fiscal agency.
+
+**Use the tabs below to learn more about each measure of economic self sufficiency employed for this project.**
+
+## MIT Living Wage Standard
+The [MIT Living Wage Standard](https://livingwage.mit.edu/counties/51540) estimates the income required for working people to achieve a basic yet sufficient standard of living, considering family size (the number of adults and number of children) and regional cost variations. This metric serves as an economic security benchmark and a living wage indicator, offering a more precise alternative to the official poverty measure that has been criticized for being antiquated. 
+
+The standard is created based off of sufficient income needed to support a family depending on its composition. It takes into account costs such as food, child care, medical, housing, transportation, civic, internet and mobile, and "other." It includes standards for households of one working adult, one working adult and one non-working adult, and two working adults. For each configuration of adults, there is a separate standard for zero, one, two, or three children. 
+
+**An initial glance at the count of households who are sufficient by the MIT self-sufficiency standards shows that 2,806 are sufficient and 2,020 are not.**
+
+```{r mit sufficient}
+## mit income ----
+cvl_house_5yr <- cvl_house_5yr %>% 
+  left_join(mit, by = "famtype") %>% 
+  # using household income (hinc)
+  mutate(mit_sufficient = if_else(hincp >= income, "Yes", "No"))
+# "income" variable is for mit standards
+
+cvl_house_5yr %>% count(mit_sufficient)
+```
+
+## EPI Family Budget
+Similar to the framework developed by MIT, the [EPI Family Budget](https://www.epi.org/resources/budget/) standards represent the household income needed for a family to live comfortably and with dignity. The standards rely, once again, on family composition, meaning the number of children and number of adults in a household. This measure likewise serves as a localized alternative to the standard poverty line employed by the government. 
+
+Unlike the MIT measure, the EPI Family Budget includes metro areas, not just localities. This allows for measurements based on groups of localities, like the Charlottesville region. EPI's Charlottesville metro area includes the city of Charlottesville along with the counties of Albemarle, Nelson, Greene, and Fluvanna. 
+
+EPI's measure likewise allows for family configurations of one or two adults with zero to four children. Notably, however, the metrics assume that both adults in two-adult households would be employed.
+
+**For the EPI standards, 2,647 households are self-sufficient and 2,179 are not.**
+
+```{r epi sufficient}
+cvl_house_5yr <- cvl_house_5yr %>% 
+  left_join(epi, by = "family") %>% 
+  # using household income (hinc)
+  mutate(epi_sufficient = if_else(hincp >= budget, "Yes", "No"))
+# "budget" variable is for epi standards
+
+cvl_house_5yr %>% count(epi_sufficient)
+```
+
+# Salient Questions
+
+Last year’s group chose to analyze economic self-sufficiency at the household level.
+
+Below are areas for future analysis that we have from the work of last year’s group. *Click on any topic for more information.*
+
+
+<details>
+<summary><strong>Choosing a Unit of Analysis</strong></summary>
+  
+What were the trade-offs of this approach, and should we consider a different unit of analysis? Maybe person level?
+
+</details>
+
+<details>
+<summary><strong>Thresholds for Individuals</strong></summary>
+
+At personal levels, is the economic sufficiency threshold the same?  
+How about individuals aged 18–24 working and living with their families?
+
+</details>
+
+<details>
+<summary><strong>Household Structure</strong></summary>
+
+Are nontraditional household structures (e.g., extended families, roommates) more economically resilient compared to single-parent households?
+
+</details>
+
+<details>
+<summary><strong>Geographic Variations</strong></summary>
+
+Could we explore cost-of-living differences within the region to see if self-sufficiency varies significantly across neighborhoods? Not sure if this is actually possible, but could be cool to explore.
+
+</details>
+
+<details>
+<summary><strong>MIT Cost of Living</strong></summary>
+
+While the MIT cost of living and other measures are based on cost of living for a given city, I am not sure that cost of living data exists that is this granular and yet, this would be awesome. Friends of mine certainly discuss neighborhoods in Charlottesville than are known to be more affordable.
+*Instead of just looking at income levels, we could analyze which industries and occupations are most associated with economic insecurity.
+
+</details>
+
+<details>
+<summary><strong>Single-Parent Households</strong></summary>
+Their project highlighted single-parent households as being disproportionately below the self-sufficiency threshold. Could we quantify how much of this disparity is driven by specific cost factors?
+
+</details>
+
+
+# A Launch Point
+
+The [Orange Dot](https://communitypartnerships.virginia.edu/research/orange-dot-report-60-2024) project, developed by the [Center for Comminity Partnerships](https://communitypartnerships.virginia.edu) at the **University of Virginia**, shows the prevalence of families living below the economic sufficiency threshold in each locality. It likewise shows the share of families under the threshold by race and age.
+
+Because Charlottesville is a “college town,” it may be interesting to further explore age trends in economic sufficiency. 
+
+# Age
+
+[ALICE](https://www.unitedforalice.org), another economic sufficiency measure produced by United Way of New Jersey, shows some interesting, nearly quadratic trends in economic sufficiency with young and old people faring the worst while middle aged people tend to earn more sufficient wages. This motivates our investigation of economic self sufficiency by life stages.
+
+## Defining Our Age Ranges
+
+Age has been recoded into Life Stages as follows:
+
+<style>
+.life-stage-list {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+.life-stage-list li::before {
+  content: "🟠 ";
+  font-size: 1.1em;
+}
+</style>
+
+<ul class="life-stage-list">
+  <li><strong>0–18</strong>: “Adolescent”</li>
+  <li><strong>19–24</strong>: “Emerging Adulthood”</li>
+  <li><strong>25–40</strong>: “Early Adulthood”</li>
+  <li><strong>41–64</strong>: “Middle Adulthood”</li>
+  <li><strong>65+</strong>: “Late Adulthood”</li>
+</ul>
+
+## Who Lives in Charlottesville? 
+
+The majority of individuals represented in the dataset are 41+ years old, comprising nearly 52 percent of cases. Curiously, despite there being about 20 thousand UVA undergrads, less than 10 percent of cases in the dataset are between the ages of 18 and 25. One other notable trend is the comparatively smaller number of individuals that are “middle aged” – or around the age of 50. **The mean age of individuals in the dataset is 43.11 years old and the median is 42 years old.**
+
+```{r life stages}
+# converting AGEP to a labeled factor
+cvl_person_5yr <- cvl_person_5yr %>%
+  mutate(life_stage = case_when(
+    agep >= 0 & agep <= 18 ~ "Adolescent",
+    agep >= 19 & agep <= 24 ~ "Emerging Adulthood",
+    agep >= 25 & agep <= 40 ~ "Early Adulthood",
+    agep >= 41 & agep <= 64 ~ "Middle Adulthood",
+    agep >= 65 ~ "Late Adulthood"
+  ))
+
+cvl_person_5yr$life_stage <- factor(cvl_person_5yr$life_stage, levels = c("Adolescent", "Emerging Adulthood", "Early Adulthood", "Middle Adulthood", "Late Adulthood"))
+
+# frequency table
+age_table <- tabyl(cvl_person_5yr$life_stage) %>%
+  adorn_pct_formatting(digits = 1)
+
+age_table %>%
+  kable("html", 
+        caption = "Percentage of Individuals by Life Stage",
+        col.names = c("Life Stage", "n", "Percentage")) %>%
+  kable_styling(
+    full_width = FALSE,        
+    position = "center",     
+    font_size = 12,     
+    bootstrap_options = c("striped", "hover", "condensed") 
+  ) %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(2, background = "darkorange")
+
+```
+
+# Income
+
+## Two Measures of Income: `WAGP` vs `PINCP` {.tabset}
+
+In the American Community Survey datasets, there are two measures of individual-level income that are importantly different in the types of income that they include. Careful comparison of the two is crucial for any analysis included in this project.
+
+There is a notable visual difference between `WAGP` and `PINCP`. It is clear from the graph that, for many individuals in the dataset, the two measures of income are the same. Nevertheless, many individuals in the dataset have no income earned from wage labor but do receive income from other sources.
+
+```{r relationship between wage variables}
+# $50K or less
+cvl_person_5yr %>%
+  ggplot(aes(x = pincp, y = wagp)) + 
+  geom_point(color = "#8db064") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, 50000)) +
+  scale_x_continuous(limits = c(0, 50000)) +
+  labs(title = "Two Different Measures of Income: WAGP vs PINCP",
+       subtitle = "For many, the two measures show equal values. For others,\nno income comes from wage labor.") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+**Click on the tabs below to learn more about the two measures of income and see how the differ in mean and median values.**
+
+### WAGP
+`WAGP`, or a wages and salary income, measures only an individual’s earned income from labor. This means that it does not include transfer income from government programs, self-employment income, or any income from investments. `WAGP` is thus ideal for looking at poverty before social assistance or returns on assets have been factored in. Thsi means that on average `WAGP` will show lower values than `PINCP`.
+
+```{r mean median of wagp}
+# mean and median for wagp
+cvl_person_5yr %>%
+  filter(agep >= 18) %>%
+  summarize(
+    mean_wage = mean(wagp),
+    median_wage = median(wagp)
+  ) %>%
+  kable("html",
+    digits = 2,
+    col.names = c("Mean Wage", "Median Wage"),
+    caption = "Summary of Wages (WAGP) for Individuals"
+  ) %>%
+  kable_styling(
+    full_width = TRUE,        
+    position = "center",     
+    font_size = 12,          
+    bootstrap_options = c("striped", "hover", "condensed") 
+  ) %>%
+  add_footnote(label = "Note: Includes all indivdiuals over the age of 18")
+```
+
+### PINCP
+`PINCP` by comparison includes all sources of income, meaning everything from wages to dividends to Social Security. This variable will be important in looking for ways that our existing welfare programs allow people to fall through the cracks while others float well above economic vulnerability. This would include people described as the “working poor.”
+
+```{r mean median of pincp}
+cvl_person_5yr %>%
+  filter(agep >= 18) %>%
+  summarize(
+    mean_wage = mean(pincp),
+    median_wage = median(pincp)
+  ) %>%
+  kable("html",
+    digits = 2,
+    col.names = c("Mean Wage", "Median Wage"),
+    caption = "Summary of Wages (PINCP) for Individuals"
+  ) %>%
+  kable_styling(
+    full_width = TRUE,        
+    position = "center",     
+    font_size = 12,          
+    bootstrap_options = c("striped", "hover", "condensed") 
+  ) %>%
+  add_footnote(label = "Note: Includes all indivdiuals over the age of 18")
+```
+
+## Median Income Across the Life Course 
+
+Below we have a bar graph showing median personal income (PINCP) by age group. The first thing that stands out is the much smaller median income of those aged 18-24. The initial thought is that a great number of these individuals are full time students–whether in high school or in higher education–and thus are skewing the average. 
+
+Unsurprisingly, median income is highest for those who are middle age (35-54), but it is interesting to see that those aged 35-44 appear to make slightly more than those aged 45-54.
+
+```{r life stages wages}
+# Create age groups and summarize median income
+income_by_agegroup <- cvl_person_5yr %>%
+  filter(pincp > 0, agep >= 18) %>%
+  mutate(age_group = case_when(
+    agep >= 18 & agep <= 24 ~ "18–24",
+    agep >= 25 & agep <= 34 ~ "25–34",
+    agep >= 35 & agep <= 44 ~ "35–44",
+    agep >= 45 & agep <= 54 ~ "45–54",
+    agep >= 55 & agep <= 64 ~ "55–64",
+    agep >= 65 ~ "65+"
+  )) %>%
+  group_by(age_group) %>%
+  summarize(median_income = median(pincp, na.rm = TRUE)) %>%
+  arrange(age_group)
+
+# Plot it
+ggplot(income_by_agegroup, aes(x = age_group, y = median_income)) +
+  geom_col(fill = "#f5deb3") +
+  labs(title = "Median Personal Income by Age Group",
+       x = "Age Group", 
+       y = "Median Income (PINCP)",
+       caption = "Note: Data from individual-level ACS PUMS 5-Year Estimates. MIT Living Wage used as benchmark.") + geom_hline(yintercept = 49896, linetype = "dashed", color = "darkorange") +
+  annotate("text", 
+           x = 1, 
+           y = 49896 + 2000, 
+           label = "MIT Living Wage", 
+           color = "darkorange", 
+           size = 3.5) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+```
+
+## Income, Sex, & Age
+The graph below shows the median Total Income (PINCP) by reported sex and Life Stage, as defined above. For all categories in Life Stage other than Adolescent, median values for PINCP are higher for males than females. It is immediately unclear what is driving the tiny yet noticeable difference between male and female adolescents.
+
+For Late Adulthood, it is important to note that the median for males is nearly twice as large as the median for females. Individuals in this age group are 65 years or older, meaning most if not all of them should be retired. Since PINCP includes sources of retirement income like Social Security benefits, the difference in medians has large implications.
+
+```{r sex and age by income type}
+average_wages <- cvl_person_5yr %>%
+  group_by(sex, life_stage) %>%
+  summarise(avg_pincp = mean(pincp, na.rm = TRUE),
+            avg_wagp = mean(wagp, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(sex = factor(sex, levels = c(1, 2), labels = c("Male", "Female")),
+         label = paste(life_stage, "-", sex))
+
+ggplot(average_wages, aes(y = reorder(label, avg_pincp))) +
+  # Create segments (lines between the two points)
+  geom_segment(aes(x = avg_wagp, xend = avg_pincp, yend = label), 
+               color = "#f5deb3", size = 2) +  # Dumbbell line color
+  # Add left points (WAGP)
+  geom_point(aes(x = avg_wagp), color = "#708090", size = 2) +  # Left (WAGP) dots
+  # Add right points (PINCP)
+  geom_point(aes(x = avg_pincp), color = "#ff8c00", size = 2) +  # Right (PINCP) dots
+  # Add title, subtitle, axes labels, and caption
+  labs(
+    title = "Gap Between Labor Income (WAGP) and Total Income (PINCP)",
+    subtitle = "By Sex and Life Stage",
+    x = "Income (USD)",
+    y = "Life Stage - Sex",
+    caption = "Note: Blue dots represent WAGP and Orange dots represent PINCP."
+  ) +
+  # Add a line for MIT Living Wage
+  geom_vline(xintercept = 49896, linetype = "dashed", color = "darkorange") +
+  # Annotate the line for MIT Living Wage
+  annotate("text", y = 3, x = 50000, label = "MIT Living Wage", color = "darkorange", angle = 90, vjust = -0.5) +
+  # Apply a minimal theme with custom text alignments
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.35),
+    plot.subtitle = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0)  # Align caption to the left
+  )
+```
+
+# Educational Attainment
+
+Looking at educational attainment of those 18 or older, the data seem to show that about six percent of residents do not have a high school diploma or equivalent. This is a representation of 139 people out of 2324 people. 19.9 percent of individuals only have some form of high school credential (507 people). 53.6 percent of residents have a higher education degree (1,245 people).
+
+```{r education levels}
+# converting SCHL to a labeled factor
+cvl_person_5yr <- cvl_person_5yr %>%
+  mutate(educ = factor(schl,
+                       levels = 1:24,
+    labels = c(
+      "No schooling completed",
+      "Nursery school, preschool",
+      "Kindergarten",
+      "Grade 1",
+      "Grade 2",
+      "Grade 3",
+      "Grade 4",
+      "Grade 5",
+      "Grade 6",
+      "Grade 7",
+      "Grade 8",
+      "Grade 9",
+      "Grade 10",
+      "Grade 11",
+      "12th grade - no diploma",
+      "Regular high school diploma",
+      "GED or alternative credential",
+      "Some college, less than 1 year",
+      "1+ years college, no degree",
+      "Associate's degree",
+      "Bachelor's degree",
+      "Master's degree",
+      "Professional degree",
+      "Doctorate degree"
+    )
+  ))
+
+# new data frame for only people no longer enrolled
+# educational attainment table
+educ_table <- cvl_person_5yr %>%
+  filter(agep >= 18) %>%
+  tabyl(educ) %>%
+  adorn_pct_formatting(digits = 1)
+
+educ_table %>%
+  kable("html", caption = "Percentage of Individuals by Education Level 18+") %>%
+  kable_styling(
+    full_width = TRUE,        
+    position = "center",     
+    font_size = 12,          
+    bootstrap_options = c("striped", "hover", "condensed") 
+  ) %>%
+  column_spec(1, bold = TRUE) %>%  
+  column_spec(3, background = "darkorange")
+```
+
+## Income, Educational Attainment, & Life Stage
+Some interesting trends emerge if we look at Educational Attainment across Life Stages.
+
+The table clearly shows that lower percentages of individuals in younger age cohorts have less than a high school degree. This makes sense considering we typically do not allow people to not finish K-12 nowadays.
+
+Those in Emerging Adulthood (19-24) have a much higher percentage of individuals (more than 40 percent) with at least some college–a promising sign.
+
+As for Bachelor’s degrees, we can see that with younger age cohorts, the percentage attaining increases: over 30 percent of those in Early Adulthood versus about 20 percent in Late Adulthood. Emerging Adulthood has the lowest percent, but this is most likely because it include people too young (19 to 21) to have yet completed a Bachelor’s degree.
+
+Those with degrees higher than a Bachelor’s are comparable across Early, Middle, and Late Adulthood. The share of individuals in Emerging Adulthood with higher than a Bachelor’s degree is much lower, but this likely reflects the typical age at which a degree higher than a Bachelor’s is attained.
+
+<details>
+<summary><strong>Intersection of Age and Educational Attainment NOTE</strong></summary>
+
+In the table below, keep in mind that excludes individuals who are below the age of 19; this is to ensure that individuals who have not completed high school are not included in the frequency table. (If these individuals were included, it would make it seem like approximately 20 percent of residents did not finish high school.)
+
+</details>
+
+```{r ed and wage }
+
+# restructuring the SCHL variable again into different categories
+cvl_person_5yr <- cvl_person_5yr %>%
+  mutate(highest_education = case_when(
+    is.na(schl) ~ "Less than High School Degree",
+    schl < 15 ~ "Less than High School Degree",
+    schl == 16 | schl == 17 ~ "High School Degree",
+    schl == 18 | schl == 19 ~ "Some College",
+    schl == 20 ~ "Associate's Degree",
+    schl == 21 ~ "Bachelor's Degree",
+    schl >= 22 ~ "Above Bachelor's Degree"
+  ))
+
+cvl_person_5yr$highest_education <- factor(cvl_person_5yr$highest_education, levels = c("Less than High School Degree", "High School Degree", "Some College", "Associate's Degree", "Bachelor's Degree", "Above Bachelor's Degree"))
+
+# filtered dataset 
+cvl_person_education <- cvl_person_5yr %>%
+  filter(agep > 18)
+
+# crosstabulation
+educ_age_table <- cvl_person_education %>%
+  tabyl(highest_education, life_stage) %>%
+  adorn_percentages("col") %>%
+  adorn_pct_formatting(digits = 1)
+
+educ_age_table %>%
+  kable("html", caption = "Percentage of Individuals by Education and Life Stage") %>%
+  kable_styling(
+    full_width = TRUE,        
+    position = "center",     
+    font_size = 12,          
+    bootstrap_options = c("striped", "hover", "condensed")  
+  ) %>%
+  column_spec(1, bold = TRUE) %>%  
+  column_spec(2, background = "orange")
+```
+
+## Educational Attainment, Life Stage, & Economic Self Sufficiency
+
+```{r educ life stage self sufficiency graph}
+# average income by educational attainment and age
+summary_data <- cvl_person_5yr %>%
+  filter(!is.na(highest_education), !is.na(agep), !is.na(wagp)) %>%  
+  group_by(highest_education, life_stage) %>%  
+  summarise(avg_wages = mean(wagp, na.rm = TRUE))
+
+# graph of above
+ggplot(summary_data, aes(x = highest_education, y = avg_wages, fill = life_stage)) +
+  geom_bar(stat = "identity", position = "dodge") + geom_hline(yintercept = 49896, linetype = "dashed", color = "darkorange") +
+  annotate("text", x = 2.7, y = 51896 + 2000, label = "MIT Living Wage", color = "darkorange", size = 3.5, angle = 90) +  scale_fill_manual(values = c(
+    "Adolescent" = "#f5deb3",           
+    "Emerging Adulthood" = "#8db064",   
+    "Early Adulthood" = "#d2b48c",      
+    "Middle Adulthood" = "#f0b46c",      
+    "Late Adulthood" = "#9fbed6"      
+  )) +
+  labs(
+    title = "Average Wages by Education and Life Stage",
+    x = "Highest Education Level",
+    y = "Average Wages (WAGP)",
+    fill = "Life Stage"
+  ) +
+  coord_flip() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+```
+
+# Race
+
+## Race & Income
+
+The analysis of mean personal income by race reveals notable differences across racial groups. 
+
+- White individuals have a mean income of \$44,614, the second-highest among all groups. 
+- Black or African American individuals report a significantly lower mean income of \$24,500.21, making them the lowest-earning group in this dataset. 
+- Individuals identifying as American Indian or Alaska Native have the highest reported mean income at \$48,026.67, slightly above that of white individuals. *Note, however, that the data suffers from an undercounting of individuals from identifying with this racial group.*
+- Asian individuals have a mean income of \$38,497.35, placing them in the middle of the income distribution. 
+- Those categorized as Some Other Race have a mean income of \$24,932.43, closely aligned with the Black population, while individuals identifying with Two or More Races report a mean income of \$36,848. 
+
+These figures highlight a clear variation in income levels across racial groups, with the gap between the highest and lowest mean incomes exceeding \$23,000.
+
+**Click on the tabs below to explore mean income across races for both measures of income.**
+
+### WAGP
+
+```{r race wagp}
+# recoding RAC1P var
+cvl_person_5yr <- cvl_person_5yr %>%
+   mutate(race_group = case_when(
+     rac1p == 1 ~ "White",
+     rac1p == 2 ~ "Black or African American",
+     rac1p == 3 ~ "American Indian/Alaska Native",
+     rac1p == 6 ~ "Asian",
+     rac1p == 8 ~ "Some Other Race",
+     rac1p == 9 ~ "Two or More Races",
+     TRUE ~ "Unknown"
+   ))
+
+# WAGP graph
+cvl_person_5yr %>%
+   group_by(race_group) %>%
+   summarize(mean_income = mean(wagp, na.rm = TRUE)) %>%
+   ggplot(aes(x = reorder(race_group, -mean_income), y = mean_income, fill = race_group)) +
+   geom_col(show.legend = FALSE) +   scale_fill_manual(values = c(
+    "White" = "#f5deb3",                     
+    "Black or African American" = "darkorange", 
+    "Asian" = "#9fbed6",                     
+    "American Indian/Alaska Native" = "#c1a57b", 
+    "Some Other Race" = "#b2b2b2",           
+    "Two or More Races" = "#8db064",         
+    "Unknown" = "#cccccc"
+  )) +
+   labs(title = "Mean Income by Race",
+        x = "Racial Group",
+        y = "Mean Income from Wages (WAGP") +
+   theme_minimal() +
+  coord_flip()
+```
+
+### PINCP
+
+```{r race pincp}
+# WAGP graph
+cvl_person_5yr %>%
+   group_by(race_group) %>%
+   summarize(mean_income = mean(pincp, na.rm = TRUE)) %>%
+   ggplot(aes(x = reorder(race_group, -mean_income), y = mean_income, fill = race_group)) +
+   geom_col(show.legend = FALSE) +   scale_fill_manual(values = c(
+    "White" = "#f5deb3",                     
+    "Black or African American" = "darkorange", 
+    "Asian" = "#9fbed6",                     
+    "American Indian/Alaska Native" = "#c1a57b", 
+    "Some Other Race" = "#b2b2b2",           
+    "Two or More Races" = "#8db064",         
+    "Unknown" = "#cccccc"
+  )) +
+   labs(title = "Mean Income by Race",
+        x = "Racial Group",
+        y = "Mean Total Personal Income (PINCP") +
+   theme_minimal() +
+  coord_flip()
+```
+
+## Race and Economic Self Sufficiency
+
+```{r race sufficient mit graph}
+#MIT sufficiency
+
+# sufficiency cutoff
+cvl_person_5yr <- cvl_person_5yr %>%
+   mutate(
+     sufficient_income = case_when(
+       pernp >= 49896 ~ "Sufficient",
+       pernp < 49896 ~ "Insufficient",
+       TRUE ~ NA_character_
+     ))
+
+# graph
+cvl_person_5yr %>%
+   filter(!is.na(sufficient_income)) %>%  # REMOVE NA rows
+  group_by(race_group, sufficient_income) %>%
+  summarize(count = n()) %>%
+  group_by(race_group) %>%
+  mutate(percent = count / sum(count) * 100) %>%
+  ggplot(aes(x = race_group, y = percent, fill = sufficient_income)) +
+  geom_col(position = "dodge") + scale_fill_manual(values = c(
+    "Sufficient" = "#f5deb3",  "Insufficient" = "darkorange")) +
+  labs(
+    title = "Economic Self-Sufficiency by Race",
+    x = "Race Group",
+    y = "Percentage of Individuals",
+    fill = "Sufficiency Status"
+  ) +
+  theme_minimal() +
+  coord_flip()
+
+```
+
+# Household Size
+
+For the Charlottesville region, the median household size is 2. The mean household size by comparison is slightly bigger than this (2.3079155). The minimum household size is 1 and the maximum is 13. When applying the weight, the mean household size is slightly different at 2.3079155 people per household.
+
+After weighing the data, it looks like about 29 percent of households have one member and about 37 percent have two members. About 14 percent of households have 3 members. This is a bit surprising considering that I would expect a good share of households to have children, which could belong to households with 2 or more individuals.
+
+```{r household table}
+# table for number of people per household
+cvl_house_5yr %>%
+  # group by household size
+  group_by(`Size of Household` = np) %>%
+  # getting the weighted number of households
+  summarize(weighted_total = sum(wgtp, na.rm = TRUE)) %>%
+  mutate(
+    # weighted total divided by the sum of the weighted total times 100
+    `Percent of Households` = weighted_total / sum(weighted_total) * 100,
+    # rounding percent to 2 digits
+    `Percent of Households` = round(`Percent of Households`, 2)
+  ) %>%
+  # selecting vars to put in table
+  select(`Size of Household`, `Percent of Households`) %>%
+  # formatting caption, middle alighing text
+  kable(format = "markdown", caption = "Proportion of Households by Number of People (Weighted)", align = "c") %>%
+  # making the table not take the full space in RMD
+  kable_styling(full_width = FALSE)
+```
+
+## SNAP
+
+Weighing the data likewise reveals that just over 6 percent of households in the Charlottesville region receive SNAP benefits.
+
+```{r snap household table}
+# proportion of households with SNAP recipients (fs)
+cvl_house_5yr %>%
+  # group by SNAP status
+  group_by(fs) %>%
+  # getting a weighted total based on SNAP status
+  summarize(weighted_total = sum(wgtp, na.rm = TRUE)) %>%
+  mutate(
+    # dividing by the weighted sum of households, multiply by 100
+    `Percent of Households` = weighted_total / sum(weighted_total) * 100,
+    # rounding to 2 digits
+    `Percent of Households` = round(`Percent of Households`, 2)
+  ) %>%
+  # selecting vars for table
+  select(fs, `Percent of Households`) %>%
+  # renaming fs for graph
+  rename(`SNAP Status` = fs) %>%
+  # naming values for SNAP status
+  mutate(`SNAP Status` = case_when(
+    `SNAP Status` == 1 ~ "Received SNAP",
+    `SNAP Status` == 2 ~ "Did Not Receive SNAP",
+    TRUE ~ "Unknown"
+  )) %>%
+  # captioning table, aligning text to center
+  kable(format = "markdown", caption = "Proportion of SNAP Recipients (Weighted)", align = "c") %>%
+  # making the table not take the full space in RMD
+  kable_styling(full_width = FALSE)
+```
+
+### SNAP & Household Size {.tabset}
+
+It looks like about six percent of households in the sample receive SNAP. There is a large jump between households of five or less people and households with more than 5 people, but I have a hunch that this is due to there being far less households with that many members. 50 percent of households with seven members and with eight members, respectively, have at least one SNAP recipient. To be fair, there are only two households with eight members and only six households with seven members. We probably have an insufficient sample size.
+
+**Click on the tabs below to see the results for each measure.**
+
+#### Overall
+
+When looking at SNAP receipt by household size, after weighing, households of nine people were most likely to have at least one SNAP recipient (100%), followed by households of eight (24.9%) and households of five (19.28%). Households with more than four people are much more likely to have at least one SNAP recipient (aside from households with 11 and 13 people).
+
+```{r snap household table overall}
+# SNAP receipt by number of people in household
+cvl_house_5yr %>%
+  # grouping by np and fs
+  group_by(`Household Size` = np, `SNAP Status` = fs) %>%
+  # getting the weighted number of households, dropping groups
+  summarize(weighted_total = sum(wgtp, na.rm = TRUE), .groups = "drop") %>%
+  # making fs a factor
+  mutate(`SNAP Status` = case_when(
+    `SNAP Status` == 1 ~ "Received SNAP",
+    `SNAP Status` == 2 ~ "Did Not Receive SNAP",
+    TRUE ~ "Unknown"
+  )) %>%
+  # selecting vars for table
+  select(`Household Size`, `SNAP Status`, weighted_total) %>%
+  # switching to wide, one column for each SNAP status
+  pivot_wider(names_from = `SNAP Status`, values_from = weighted_total, values_fill = 0) %>%
+  # order by household size
+  arrange(`Household Size`) %>%
+  mutate(
+    # calculating percent receving SNAP
+    `Percent Receiving SNAP` = (`Received SNAP` / (`Received SNAP` + `Did Not Receive SNAP`)) * 100,
+    # rounding, 2 digits
+    `Percent Receiving SNAP` = round(`Percent Receiving SNAP`, 2)
+  ) %>%
+  # captioning, center aligned text
+  kable(format = "markdown", caption = "Weighted Number of SNAP Recipients by Household Size", align = "c") %>%
+  # making the table not take the full space in RMD
+  kable_styling(full_width = FALSE)
+```
+
+```{r snap household graph overall}
+# graph of above data
+# shows percent of households that have a SNAP recipient by household size
+cvl_house_5yr %>%
+  # filtering to exclude cases where household size is 0 and SNAP status is NA
+  filter(np != 0, !is.na(fs)) %>%
+  # # people is on X axis, the bar fill is SNAP status
+  ggplot(aes(x = factor(np), fill = factor(fs))) +
+  # bar chart, filled
+  geom_bar(position = "fill") +
+  # formatting Y axis to be percents
+  scale_y_continuous(labels = scales::percent_format()) +
+  # manually picking colors for SNAP receipt and adding labels
+  scale_fill_manual(
+    values = c("1" = "#1f77b4", "2" = "#d3d3d3"),
+    labels = c("1" = "Yes", "2" = "No")
+  ) +
+  # labels for X, Y, and legend
+  labs(x = "Number of People in Household", 
+       y = "Percentage", 
+       fill = "SNAP Status") +
+  theme_minimal()
+```
+
+#### Only Households with Related Children
+
+After subsetting the data so that it only includes households with related children, the proportion of two-person households with a SNAP recipient jumps from less than 4 percent to more than 17 percent. Three- and four-person households, however, do not experience a similar jump. Like before, households with more than 5 members are much more likely to have at least one SNAP recipient compared to smaller household sizes (excluding households with 13 members).
+
+```{r household snap table children}
+# by number of people in household, only households w/ related children
+# SNAP receipt by number of people in household
+cvl_house_5yr %>%
+  # filtering to only households w/ related children
+  filter(fparc %in% c(1, 2, 3)) %>%
+  # grouping by np and fs
+  group_by(`Household Size` = np, `SNAP Status` = fs) %>%
+  # getting the weighted number of households, dropping groups
+  summarize(weighted_total = sum(wgtp, na.rm = TRUE), .groups = "drop") %>%
+  # making fs a factor
+  mutate(`SNAP Status` = case_when(
+    `SNAP Status` == 1 ~ "Received SNAP",
+    `SNAP Status` == 2 ~ "Did Not Receive SNAP",
+    TRUE ~ "Unknown"
+  )) %>%
+  # selecting vars for table
+  select(`Household Size`, `SNAP Status`, weighted_total) %>%
+  # switching to wide, one column for each SNAP status
+  pivot_wider(names_from = `SNAP Status`, values_from = weighted_total, values_fill = 0) %>%
+  # order by household size
+  arrange(`Household Size`) %>%
+  mutate(
+    # calculating percent receving SNAP
+    `Percent Receiving SNAP` = (`Received SNAP` / (`Received SNAP` + `Did Not Receive SNAP`)) * 100,
+    # rounding, 2 digits
+    `Percent Receiving SNAP` = round(`Percent Receiving SNAP`, 2)
+  ) %>%
+  # captioning, center aligned text
+  kable(format = "markdown", caption = "Weighted Number of SNAP Recipients by Household Size", align = "c") %>%
+  # making the table not take the full space in RMD
+  kable_styling(full_width = FALSE)
+```
+
+```{r snap household graph children}
+# graph of above
+cvl_house_5yr %>%
+  filter(np != 0, !is.na(fs), fparc %in% c(1, 2, 3)) %>%
+  ggplot(aes(x = factor(np), fill = factor(fs))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(
+    values = c("1" = "#1f77b4", "2" = "#d3d3d3"),
+    labels = c("1" = "Yes", "2" = "No")
+  ) +
+  theme_minimal() +
+  labs(x = "Number of People in Household", 
+       fill = "Food Stamp Recipient",
+       title = "Only Households with a Related Child")
+```
+
+## Household Size and Economic Self Sufficiency {.tabset}
+
+With each of the household sizes below, the takeaways from each will vary in how revealing they are. For example, households with five or more members only make up 7.71 percent of the data set. What this means is that the findings about self-sufficiency for a household of, say, 13 people will not be too generalizable.
+
+**Click on the tabs below to see the results for each measure.**
+
+### MIT
+
+According to MIT’s self-sufficiency standards, households with a size of one have the highest share of people below self-sufficiency (~62 percent) aside from households of 9 and 11. A higher share of 2 person households are insufficient (~35 percent) compared to households of 3 (~31 percent).
+
+```{r household size mit}
+# MIT sufficient receipt by number of people in household
+cvl_house_5yr %>%
+  # grouping by np and mit_sufficient
+  group_by(`Household Size` = np, `Self-Sufficient` = mit_sufficient) %>%
+  # getting the weighted number of households, dropping groups
+  summarize(weighted_total = sum(wgtp, na.rm = TRUE), .groups = "drop") %>%
+  # making sure mit_sufficient is labeled correctly
+  mutate(`Self-Sufficient` = case_when(
+    `Self-Sufficient` == "Yes" ~ "Self-Sufficient",
+    `Self-Sufficient` == "No" ~ "Not Self-Sufficient",
+    TRUE ~ "Unknown"
+  )) %>%
+  # selecting vars for table
+  select(`Household Size`, `Self-Sufficient`, weighted_total) %>%
+  # switching to wide format
+  pivot_wider(names_from = `Self-Sufficient`, values_from = weighted_total, values_fill = 0) %>%
+  # order by household size
+  arrange(`Household Size`) %>%
+  # calculate percent not self-sufficient
+  mutate(
+    `Percent Not Self-Sufficient` = (`Not Self-Sufficient` / (`Not Self-Sufficient` + `Self-Sufficient`)) * 100,
+    `Percent Not Self-Sufficient` = round(`Percent Not Self-Sufficient`, 2)
+  ) %>%
+  # render table
+  kable(format = "markdown", caption = "Weighted Number of Self-Sufficient Households by Household Size", align = "c") %>%
+  kable_styling(full_width = FALSE)
+```
+
+### EPI 
+
+Like with the MIT self-sufficiency standards, households with a size of one have the highest proportion of insufficiency, with about 67 percent of those households being insufficient (excluding households with a size of 9 or 11). More 2 person households are insufficient (~38 percent) than 3 person households (~33 percent).
+
+```{r household epi}
+# EPI sufficient receipt by number of people in household
+cvl_house_5yr %>%
+  # grouping by np and mit_sufficient
+  group_by(`Household Size` = np, `Self-Sufficient` = epi_sufficient) %>%
+  # getting the weighted number of households, dropping groups
+  summarize(weighted_total = sum(wgtp, na.rm = TRUE), .groups = "drop") %>%
+  # making sure mit_sufficient is labeled correctly
+  mutate(`Self-Sufficient` = case_when(
+    `Self-Sufficient` == "Yes" ~ "Self-Sufficient",
+    `Self-Sufficient` == "No" ~ "Not Self-Sufficient",
+    TRUE ~ "Unknown"
+  )) %>%
+  # selecting vars for table
+  select(`Household Size`, `Self-Sufficient`, weighted_total) %>%
+  # switching to wide format
+  pivot_wider(names_from = `Self-Sufficient`, values_from = weighted_total, values_fill = 0) %>%
+  # order by household size
+  arrange(`Household Size`) %>%
+  # calculate percent not self-sufficient
+  mutate(
+    `Percent Not Self-Sufficient` = (`Not Self-Sufficient` / (`Not Self-Sufficient` + `Self-Sufficient`)) * 100,
+    `Percent Not Self-Sufficient` = round(`Percent Not Self-Sufficient`, 2)
+  ) %>%
+  # render table
+  kable(format = "markdown", caption = "Weighted Number of Self-Sufficient Households by Household Size", align = "c") %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Family Presence and Related Children
+
+We’ll now turn to exploring the datasets based on the variable `fparc`, which provides information about two things:
+
+1. whether a household is a family
+2. whether the household has any related children.
+
+The overwhelming number of households in the Charlottesville region either are not families (38.3 percent) or contain no related children (36 percent). Nearly 17 percent of households contain related children that are between 5 and 17 years old. This is the largest category that contains related children.
+
+```{r fparc table}
+# variable showing family presence and age of related children
+cvl_house_5yr %>%
+  # weighted count using wgtp and name the count column
+  count(fparc, wt = wgtp, name = "Weighted Count") %>%
+  # calculate weighted percentages
+  mutate(Percentage = `Weighted Count` / sum(`Weighted Count`) * 100) %>%
+  # recode fparc for readability
+  mutate(fparc = case_when(
+    fparc == 1 ~ "Related Children, under 5",
+    fparc == 2 ~ "Related Children, 5-17",
+    fparc == 3 ~ "Related Children, under 5 and 5-17",
+    fparc == 4 ~ "No Related Children",
+    TRUE ~ "GQ/vacant/not a family"
+  )) %>%
+  # create formatted table
+  kable(format = "markdown", caption = "Family Presence and Age of Related Children (Weighted)", align = "lcc") %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Household Size & Family Presence and Related Children
+
+Looking at family presence and related children by the number of people in the household, the most popular combinations are a household size of 2 with no related children (1,524 households) and households with one member that is not a family (1,381 households). Curiously, for households of 3 people, the biggest portion of them contain no related children (261 households).
+
+```{r household fparc table}
+#by number of people in household
+cvl_house_5yr %>%
+  # labels for values of fparc
+  mutate(fparc = case_when(
+    fparc == 1 ~ "Related Children, under 5",
+    fparc == 2 ~ "Related Children, 5-17",
+    fparc == 3 ~ "Related Children, under 5 and 5-17",
+    fparc == 4 ~ "No Related Children",
+    TRUE ~ "GQ/vacant/not a family"
+  )) %>%
+  # counting cases in np and fparc
+  count(`Household Size` = np, `Family Presence and Related Children` = fparc) %>%
+  # restructuring to wide
+  pivot_wider(names_from = `Family Presence and Related Children`, 
+              values_from = n, values_fill = 0) %>%
+  # arranging by values of np
+  arrange(`Household Size`) %>%
+  # kable formatting, caption and center alignment
+  kable(format = "markdown", caption = "Household Size by Family Presence and Related Children", align = "c") %>%
+  kable_styling(full_width = FALSE)
+```
+
+## SNAP & Family Presence and Related Children
+
+Out of all categories for fparc, the largest portion of households with at least one SNAP recipient are not a family (95 households). By comparison, the largest portion of non-SNAP households are households with no related children (1,823 households).
+
+```{r snap fparc table}
+# by SNAP recipient status
+cvl_house_5yr %>%
+  # labels for values of fs
+  mutate(
+    `SNAP Recipient` = case_when(
+      fs == 1 ~ "Yes",
+      fs == 2 ~ "No",
+      TRUE ~ "Missing"
+    ),
+    # labels for fparc
+    `Child Status` = case_when(
+      fparc == 1 ~ "Related Children, under 5",
+      fparc == 2 ~ "Related Children, 5-17",
+      fparc == 3 ~ "Related Children, under 5 and 5-17",
+      fparc == 4 ~ "No Related Children",
+      TRUE ~ "GQ/vacant/not a family"
+    )
+  ) %>%
+  # counting cases in fs and fparc
+  count(`SNAP Recipient`, `Child Status`) %>%
+  # restructing to wide
+  pivot_wider(names_from = `Child Status`, values_from = n, values_fill = 0) %>%
+  # kable formatting, caption and center alignment
+  kable(format = "markdown", caption = "SNAP Receipt by Household Child Composition", align = "c") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r snap fparc graph}
+# graph of the above
+cvl_house_5yr %>%
+  # filtering out NAs for SNAP status
+  filter(!is.na(fs)) %>%
+  # x values come from fparc, fs is fill of bars
+  ggplot(aes(x = factor(fparc), fill = factor(fs))) +
+  # filled bar chart
+  geom_bar(position = "fill") +
+  # formatting labels as percentaes
+  scale_y_continuous(labels = scales::percent_format()) +
+  # labeling the fill. categories
+  scale_fill_discrete(labels = c("2" = "No", "1" = "Yes")) +
+  # labeling values on X axis
+  scale_x_discrete(labels = str_wrap(c(
+    "1" = "With related children under 5 years only",
+    "2" = "With related children 5 to 17 years only",
+    "3" = "With related children under 5 years and 5 to 17 year",
+    "4" = "No related children"
+  ), 15)) +
+  theme_minimal() +
+  # labeling axes
+  labs(x = "Family Presence and Related Children", 
+       fill = "Food Stamp Recipient:") +
+  # legend at bottom, centered
+  theme(
+    legend.position = "bottom",
+    legend.justification = "center",
+    axis.title.y = element_text(hjust = 0.5)
+  )
+```
+
