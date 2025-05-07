@@ -1,0 +1,597 @@
+---
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    smooth_scroll: true
+    theme: default
+    code_folding: hide
+---
+
+[Exploring Gun Violence in Virginia [Presentation Update]]{style="font-weight: bold; font-size: 300%;"}\
+**Authors:** Alvin Nguyen, Hana Bakhit, Will Rowson, Zane Ruzicka <br> **Date:** April 24, 2025
+
+```{r Setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# **Introduction, Importing Data, and Initial Research Questions**
+
+Our initial project scope centered around expanding the University's regional gun violence work. The Equity Center has provided data and materials to support both the University's <a href="https://gvsp.virginia.edu/" style="color:purple;"><strong>Gun Violence Solutions Project</strong></a>, and the broader <a href="https://prescouncil.president.virginia.edu/community-safety" style="color:purple;"><strong>Community Safety Group</strong></a>. Using data initially collected from the <a href="https://www.gunviolencearchive.org/query" style="color:purple;"><strong>Statewide Gun Violence Archive</strong></a>, <a href="https://data.virginia.gov/dataset/?q=firearm&organization=virginia-department-of-health" style="color:purple;"><strong>Virginia's Department of Health</strong></a>, and <a href="https://va.beyond2020.com/va_public/Browse/browsetables.aspx" style="color:purple;"><strong>Virginia's Incident-Based Reporting Portal</strong></a>, we were encouraged to consider the following potential research pathways:
+
+-   Analysis that examines how different measures of gun violence are related across place, or that compares how similar measures from different sources correspond.
+-   Analysis that ranks places based on different measures for a given point in time, or investigates creating composite measures based on multiple sources.
+-   Analysis that focuses on key localities to compare outcomes, experiences, or change across time.
+-   Analysis that focuses on change over time to understand where outcomes are improving or worsening.
+-   Data tables and sources that allow others to find information on places of interest, or on problems of interest.
+
+## **Loading Packages and Data**
+
+```{r Importing Data, echo=TRUE}
+
+library(tidyverse)
+# library(dplyr)
+library(janitor)
+# library(ggplot2)
+library(ggforce)
+library(sf)
+library(tigris)
+library(scales)
+library(leaflet)
+
+
+vdh_fai_county <- read_csv("../data/vdh_fai_county.csv")
+vdh_age <- read_csv("../data/vdh_fd_district_age.csv")
+vdh_fai_demographic <- read_csv("../data/vdh_fai_demographic.csv")
+vdh_race <-read_csv("../data/vdh_fd_district_race.csv")
+vdh_sex <- read_csv("../data/vdh_fd_district_sex.csv")
+nibrs_firearm <- read_csv("../data/nibrs_firearm_age.csv")
+
+healthdistrict_vdh_all <- read_csv("data/healthdistricts.csv")
+localities_vdh_all <- read_csv("data/crosswalk_combined[locality].csv")
+
+firearm_other_vdh_2534 <- read_csv("data/crosswalk_combined[25-34].csv")
+firearm_other_vdh_1524 <- read_csv("data/crosswalk_combined[15-24].csv")
+firearm_other_vdh_3544 <- read_csv("data/crosswalk_combined[35-44].csv")
+
+```
+
+## **Preliminary Data Cleaning**
+
+Before exploring the data more thoroughly, we needed to do some cleaning of the Locality variable within out Virginia Department of Health (VDH) datasets. Cleaning locality information would become a common task throughout the lifespan of our project, as we encountered misalignments between the naming conventions between sources.
+
+```{r Preliminary Data Cleaning}
+
+## Subtracting 'years' off the label axis.
+
+  vdh_age$`Age Group` <- sub(" years", "", vdh_age$`Age Group`)
+
+## Shortening locality names for data visualization later (age data set).
+
+  vdh_age <- vdh_age %>%
+    mutate(`Health District` = case_when(
+      `Health District` == "Rappahannock/Rapidan" ~ "Rapidan",
+      `Health District` == "Pittsylvania/Danville" ~ "Danville",
+      TRUE ~ `Health District`
+    ))
+  
+## Restructuring 'Race Ethnicity' vars to fit better as labels.
+  
+  vdh_race$`Race Ethnicity` <- sub("American Indian or Alaskan Native", "Indigenous Peoples", vdh_race$`Race Ethnicity`)
+  vdh_race$`Race Ethnicity` <- sub("or", "/", vdh_race$`Race Ethnicity`)
+  vdh_race$`Race Ethnicity` <- gsub("\\s*\\(.*\\)", "", vdh_race$`Race Ethnicity`)
+
+## Shortening locality names for data visualization later (race dataset). 
+  
+  vdh_race <- vdh_race %>%
+    mutate(`Health District` = case_when(
+      `Health District` == "Rappahannock/Rapidan" ~ "Rapidan",
+      `Health District` == "Pittsylvania/Danville" ~ "Danville",
+      TRUE ~ `Health District`
+    ))
+  
+## Shortening locality names for data visualization later (Sex dataset).
+  
+  vdh_sex <- vdh_sex %>%
+    mutate(`Health District` = case_when(
+      `Health District` == "Rappahannock/Rapidan" ~ "Rapidan",
+      `Health District` == "Pittsylvania/Danville" ~ "Danville",
+      TRUE ~ `Health District`
+    ))
+
+```
+
+# **Initial Data Exploration and Literature Review**
+
+We began our project with some initial exploration of our datasets, honing in on key variables that could potentially be combined with our literature review to identify some areas for further exploration. <br>
+
+## **Exploring Localities, Virginia's Gun Violence Reform, and Sanctuary Cities**
+
+Taking a policy analysis approach to some of our initial literature review, we identified two significant shifts in firearm policy that took place within the timing of our data: (a) a package of gun reforms passed in Virginia's General Assembly in 2020, as well as (b) the passage of the federal Bipartisan Safer Communities Act (BSCA) in 2022. The BSCA created several programs and funding sources to tackle three overarching goals:
+
+-   Reducing community and domestic violence,
+-   Reducing school and mass shootings,
+-   Supporting school- and community-based mental health services.
+
+Because the bill was passed so recently, and was national in scope, we assumed it would be difficult to glean any substantial impact on gun violence in Virginia that was associated with its passage. However, it was helpful to review recent publications about its general impact, including the White House's <a href="https://bidenwhitehouse.archives.gov/wp-content/uploads/2024/06/A-Report-on-the-Implementation-of-the-Bipartisan-Safer-Communities-Act.pdf" style="color:purple;"><strong>2024 Report on the the Implementation of the BSCA</strong></a>.
+
+In 2020, Virginia's general assembly passed a <a href="https://everytownresearch.org/rankings/state/virginia/" style="color:purple;"><strong>suite of seven gun safety laws</strong></a>, including the following provisions:
+
+-   Required criminal background checks for all gun sales,
+-   Capped handgun purchases to one for every 30 days,
+-   Enacted a red flag law, meaning judges can temporarily order the seizure of firearms from people who are deemed a threat,
+-   Expanded local governments' power to ban firearms from public events and government buildings,
+-   Increased penalties for failing to secure firearms from child access,
+-   Required people subject to Permanent Protective Orders (PPOs) to surrender firearms,
+-   Required gun owners to report lost or stolen firearms within 48 hours.
+
+In response to these gun reforms, a new <a href="https://scholarworks.waldenu.edu/dissertations/9965/" style="color:purple;"><strong>2nd Amendment Sanctuary</strong></a> movement swept through the state of Virginia, in which 91 of 95 counties and 56 cities and towns in the Commonwealth passed resolutions in opposition to the state-level laws. Most 2nd Amendment sanctuary resolutions range from passive symbolic gestures of discontent or noncooperation to more active resistance such as taxpayer funded legal action, deputizing the public, or calling on the “militia’ to ensure citizens can own weapons.
+
+```{r Map of Sanctuary Cities,fig.align = 'center', out.width="80%"}
+
+  knitr::include_graphics("images/sanctuarylocalities.png")
+
+```
+
+Given the significant policies enacted in 2020, and our preexisting curiosities about how gun violence varied across the state, we decided to explore rates of gun violence from 2015-2024, using data about the number of firearm related injuries per 10K emergency room visits. We began by developing a visualization of this data for the state as a whole, and also created a visualization that compared the ten localities with the highest average rate of firearm injuries per 10K emergency room visits from 2015-2024.
+
+```{r Statewide Rate of Firearm Injuries, fig.width=10, fig.height=7}
+
+## Visualization #1 
+vdh_fai_county %>%
+  group_by(Year) %>%
+  summarize(avg_rate = mean(`Rate of Firearm Injuries Per 10K ED Visits`, na.rm = TRUE)) %>%
+  ggplot(aes(x = Year, y = avg_rate)) +
+  geom_line(color = "gray") +
+  geom_point(color = "black") + 
+  geom_text(aes(label = round(avg_rate, 1)), vjust = -1.0, size = 3.5) +
+  scale_x_continuous(breaks = 2015:2024) +
+  theme_minimal() +
+  labs(
+    title = "Average Rate of Firearm Injuries in Virginia, 2015–2024",
+    x = "Year",
+    y = "Avg Rate of Firearm Injuries per 10K Emergency Department Visits"
+)
+
+#Visualization #2
+top_counties_rfi <- vdh_fai_county %>%
+  group_by(`Patient City County`) %>%
+  summarize(avg_rate = mean(`Rate of Firearm Injuries Per 10K ED Visits`, na.rm=TRUE)) %>% 
+  arrange(desc(avg_rate)) %>% 
+  slice_head(n=10) 
+
+vdh_fai_county %>%
+  filter(`Patient City County` %in% top_counties_rfi$`Patient City County`) %>%
+  ggplot(aes(x = Year, y = `Rate of Firearm Injuries Per 10K ED Visits`, group = `Patient City County`)) +
+  geom_line(color = "gray") +
+  geom_point(color = "black") + 
+  facet_wrap(~ `Patient City County`, labeller = label_wrap_gen(width = 33)) +
+  scale_x_continuous(breaks = seq(2015, 2024, by =2)) +
+  theme_minimal() +
+  labs(
+    title = "Top 10 Virginia Localities by Average Rate of Firearm Injuries, 2015-2024",
+    x = "Year",
+    y = "Rate of Firearm Injuries",
+    caption = "[Note: Any city and county groupings are provided by the Virginia Department of Health as localities.]"
+  ) + 
+  theme(
+  plot.caption = element_text(hjust = 0)
+  )
+```
+
+The statewide graph demonstrates that, on average, localities across the state had a relatively steady rate of firearm injuries from 2015-2019, before a significant increase in 2019 that receded gradually from 2021-2024. The substantial national increase in violence associated with the onset of the COVID-19 pandemic appears to trump any reduction in firearm violence that may have been achieved by the passage of gun reforms in the Commonwealth. The statewide trend is useful as a point of comparison with individual localities' experiences over this time frame. The graphs across these localities differ greatly from one another, with some remaining relatively flat rates across 2015-2024, others reflecting the statewide graph, and some oscillating much more frequently. While these comparisons were interesting and the variation raised additional questions, the underlying influence of COVID-19 on gun violence in Virginia led us to to proceed down other research inquiries.
+
+## **Exploring the Race Dimension**
+
+We began by summarizing key statistics for firearm deaths by race using the VDH's Firearm Deaths and Race/Ethnicity dataset, not to be confused with our own race categorizations. Our analysis computed the highest to lowest counts for each provided race category, as well as the minimum, median, and maximum firearm deaths for the respective groups. We also produced a visualization to view the race trends better.These efforts demonstrated that [<strong>White and Black/African American groups have the highest firearm fatality counts, totaling 3,490 and 1,964 deaths from firearm incidents between 2018 and 2022</strong>]{style="color:#CC0000;"}, respectively.
+
+Note that in this analysis, as well as the one for sex and age, we switched from the locality-level to health district-level, as the latter categorization of cities and counties provided for a more consistent identification system between the datasets provided to us and those we pulled in ourselves. As discussed below, health districts became more relevant, given how our group thought about firearm fatalities in relation to other leading causes of death.
+
+While we did not decide to pursue further analysis of variations amongst racial categorizations in the VDH data, we feel it is appropriate to note racial categorizations' common shortcomings in the field of data analysis: "race" has historically been employed in the social sciences (and other fields) in a way that reinforces stereotypes, contributes to racial stratification, and/or obscures the root causes of disparities in ways that prevent meaningful interventions. We note here that "ethnicity" "ethnic identity" may be a more appropriate term for what was collected in the data, and that certain ethinic identities are not acknowledgeed in the VDH data. For additional information, see <a href="https://www.jstor.org/stable/10.5749/j.cttttcnc" style="color:purple;"><strong>Zuberi (2001)</strong></a>.
+
+```{r Examining Race}
+vdh_race %>%
+  group_by(`Race Ethnicity`) %>%
+  summarise(Total_Deaths = sum(`Firearm Deaths`, na.rm = TRUE)) %>%
+  arrange(desc(Total_Deaths)) %>%
+  print(n = 350)
+
+vdh_race %>%
+  group_by(`Race Ethnicity`) %>% 
+  summarize(min_FD = min(`Firearm Deaths`),
+            med_FD = median(`Firearm Deaths`),
+            max_FD = max(`Firearm Deaths`))
+
+```
+
+```{r Firearm Deaths by Race, echo=TRUE}
+
+vdh_race %>%
+  ggplot(aes(x=`Race Ethnicity`, y=`Rate of Firearm Deaths per 100K Pop`))+
+  geom_bar(stat="identity")+
+  facet_wrap(~`Health District`) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+        axis.text.y = element_text(size=7),
+        strip.text = element_text(size=5)) +
+  facet_wrap(~`Health District`, labeller = label_wrap_gen(width = 7)) + 
+  labs(title="Rate of Firearm Deaths by Race/Ethnicity, Combined 2018-2022",
+       x= "Race/Ethnicity",
+       y= "Rate of Firearm Deaths (per 100k People)")
+
+```
+
+## **Exploring the Sex Dimension**
+
+We also examined key statistics about firearm deaths by sex, wherein we observed that [<strong>men have a higher firearm fatality count than women</strong>]{style="color:#CC0000;"}. Again, we included a corresponding visualization of this information.
+
+While we did not choose to investigate the variations of firearm violence encounters based on VDH's sex dataset, we note the shortcomings and dangers to vulnerable groups in using only a binary sex categorization. We recognize the omission of additional classifications that more accurately reflect individuals' lived experiences and identities. For additional information about the issues presented by binary classification systems, see <a href="https://data-feminism.mitpress.mit.edu/pub/h1w0nbqp/release/3?readingCollection=0cd867ef" style="color:purple;"><strong>D'Ignazio and Klein (2020), Chapter 4</strong></a>.
+
+```{r Examining Sex, echo=TRUE}
+
+vdh_sex %>%
+  group_by(Sex) %>%
+  summarize(min_FD = min(`Firearm Deaths`),
+            med_FD = median(`Firearm Deaths`),
+            max_FD = max(`Firearm Deaths`))
+
+```
+
+```{r Firearm Deaths by Sex, echo=TRUE}
+
+vdh_sex %>%
+  ggplot(aes(x=`Sex`, y=`Rate of Firearm Deaths per 100K Pop`))+
+  geom_bar(stat="identity")+
+  facet_wrap(~`Health District`) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=8),
+        axis.text.y = element_text(size=7),
+        strip.text = element_text(size=7)) +
+  facet_wrap(~`Health District`, labeller = label_wrap_gen(width = 7)) + 
+  labs(title="Rate of Firearm Deaths by Sex, Combined 2018-2022",
+       x= "Sex",
+       y= "Rate of Firearm Deaths (per 100k People)")
+
+```
+
+## **Exploring the Age Dimension**
+
+Finally, we examined the age dimension using the VDH's Firearm Deaths and Age dataset. Notably, [<strong>the 25–34 age group showed the highest count, with 107 deaths reported</strong>]{style="color:#CC0000;"}. This finding directed our attention to this demographic, and was the springboard we took towards our primary research questions for the project.
+
+```{r Examining Age, echo=TRUE}
+
+vdh_age %>%
+  group_by(`Age Group`) %>%
+  summarise(Total_Deaths = sum(`Firearm Deaths`, na.rm = TRUE)) %>%
+  arrange(desc(Total_Deaths)) %>%
+  print(n = 350)
+
+vdh_age %>%
+  group_by(`Age Group`) %>% 
+  summarize(min_FD = min(`Firearm Deaths`),
+            med_FD = median(`Firearm Deaths`),
+            max_FD = max(`Firearm Deaths`))
+```
+
+```{r Firearm Deaths by Age, echo=TRUE}
+
+vdh_age %>%
+  ggplot(aes(x=`Age Group`, y=`Rate of Firearm Deaths per 100K Pop`)) + 
+  geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+        axis.text.y = element_text(size=7),
+        strip.text = element_text(size=7)) +
+  facet_wrap(~`Health District`, labeller = label_wrap_gen(width = 7))+ 
+  labs(title="Rate of Firearm Deaths by Age Group, Combined 2018-2022",
+       x= "Age Group",
+       y= "Rate of Firearm Deaths (per 100k People)")
+
+```
+
+At first glance, our findings from the Virginia Department of Health’s Firearm Deaths and Age dataset appeared to diverge from the patterns highlighted in the national literature. While <a href="https://www.sciencedirect.com/science/article/pii/S1743919118315462" style="color:purple;"><strong>Tseng et al. (2018)</strong></a> and <a href="https://www.sciencedirect.com/science/article/pii/S0022480422006424" style="color:purple;"><strong>Bailey et al. (2023)</strong></a> both identify adolescents (particularly those between the ages of 15 and 19) as disproportionately impacted by firearm injuries and fatalities, [<strong>our initial analysis pointed to the 25–34 age group as having the highest number of firearm-related deaths in Virginia, with 1,187 deaths reported</strong>]{style="color:#CC0000;"}. This discrepancy puzzled us, especially given how consistently the literature emphasized the urgency of early intervention and adolescent-focused prevention strategies.
+
+However, upon closer inspection of the VDH dataset, we realized that the age categories used in the state’s reporting may have inadvertently obscured important trends. Specifically, the age groups 15–17, 18–19, and 20–24 were presented as distinct bands, likely due to the high volume of firearm deaths recorded in each. Initially, we had treated these categories independently, which made the 25–34 cohort appear as the most at-risk. But recognizing that this segmented structure might be limiting our interpretation, we chose to restructure the data by collapsing the separated groups into a single 15–24 category. This adjustment changed our observation of the data. Once combined, [<strong>the newly defined 15–24 age group emerged as having the highest total number of firearm fatalities reported</strong>]{style="color:#CC0000;"}, which aligned more closely with the research findings presented by the mentioned studies.
+
+```{r Age Regrouped Analysis}
+
+vdh_age <- vdh_age %>%
+  mutate(`Age Group` = case_when(
+    `Age Group` %in% c("15-17", "18-19", "20-24") ~ "15-24",
+    TRUE ~ `Age Group`
+  ))
+
+vdh_age <- vdh_age %>%
+  group_by(`Health District`, `Age Group`) %>%
+  summarize(`Firearm Deaths` = sum(`Firearm Deaths`, na.rm = TRUE), .groups = "drop")
+
+vdh_age %>%
+  group_by(`Age Group`) %>%
+  summarize(Total_Deaths = sum(`Firearm Deaths`, na.rm = TRUE)) %>%
+  arrange(desc(Total_Deaths)) %>% 
+  print()
+
+```
+
+The alignment between our findings and the broader literature was an important moment in our project development. It showed us how critical it is to question and, when necessary, reconfigure the way administrative data is presented. The original VDH age groupings, while valid to their evaluation and monitoring methodology, masked patterns that became clearer only when we reorganized them to match analytical frameworks used in the empirical research. This refinement sharpened our focus on adolescence and emerging adulthood as a risk period.
+
+# **Firearm Fatalities and Other Fatalities: New Questions and Refining the Dataset**
+
+## **New Questions**
+
+As young adults who grew up in a volatile gun climate, some of us even living near mass shooting tragedies in our hometowns (Virginia Beach and Chesapeake), we felt that adopting a public health perspective on age groups and firearm mortality was an appropriate approach. Framing the issue alongside other leading causes of death, such as cardiovascular disease, cancer, and accidents, highlights the systemic nature of mortality. Experts at the <a href="https://publichealth.jhu.edu/center-for-gun-violence-solutions/research-reports/the-public-health-approach-to-prevent-gun-violence#gun-violence-public-health-epidemic" style="color:purple;"><strong>John Hopkins School of Public Health (2023)</strong></a> and the <a href="https://www.kff.org/mental-health/issue-brief/child-and-teen-firearm-mortality-in-the-u-s-and-peer-countries/" style="color:purple;"><strong>Kaiser Family Foundation (2023)</strong></a> support this public health framing.
+
+As such, we sought out public health data on other leading causes of death at the health district level to correspond with our existing Virginia Department of Health firearm fatality dataset. Through internet research, we identified the <a href="https://wonder.cdc.gov/mcd.html" style="color:purple;"><strong>National Center for Health Statistics Mortality Data via the Centers for Disease Control and Prevention (CDC) WONDER</strong></a> database, which includes the <a href="https://wonder.cdc.gov/wonder/help/mcd-expanded.html" style="color:purple;"><strong>Current Final Multiple Cause of Death</strong></a> dataset. From this database, we followed the steps below:
+
+## **Pulling New Data**
+
+We submitted queries to obtain death data for each age group (15–24 years, 25–34 years, and 35–44 years) from 2018 to 2022 at both the state and county levels. We extracted causes of death based on the UCD - ICD-10 113 Cause List. The included causes were:
+
+-   ***Cancer:*** Malignant neoplasms (C00–C97); in situ neoplasms, benign neoplasms, and neoplasms of uncertain or unknown behavior (D00–D48)
+
+-   ***Cardiovascular Disease:*** Major cardiovascular diseases (I00–I78)
+
+-   ***Accidents:*** Transport accidents (V01–V99, Y85); falls (W00–W19); accidental drowning and submersion (W65–W74); accidental exposure to smoke, fire, and flames (X00–X09); accidental poisoning and exposure to noxious substances (X40–X49); and other/unspecified non-transport accidents (W20–W31, W35–W64, W75–W99, X10–X39, X50–X59, Y86)
+
+We included localities with both suppressed and zero values. Statistics representing fewer than ten deaths (1–9) were suppressed in the dataset, assumedly to prevent the identification of individuals in these small groups. Because these non-values comprised most of the categories when disaggregated into specific causes of death, we combined the data for cancer, cardiovascular diseases, and accidents into a single “other deaths” bin for comparison between the health districts and age groups.
+
+This decision incurs a trade-off, sacrificing specificity about the individual cause of death. However, by collapsing these causes of death into a single category, our group still maintained representation of the key mortality drivers for each demographic group. For instance, while cancer contributes relatively little to mortality among the 15-24 age group, the combined category still captures accidental deaths (the leading cause in this age group), ultimately ensuring the metric remains meaningful.
+
+## **Matching Localities**
+
+***(1)*** We developed a crosswalk to match each locality with its corresponding FIPS code and health district using information from the <a href="https://www.vdh.virginia.gov/local-health-districts/" style="color:purple;"><strong>Virginia Department of Health</strong></a>. This allowed us to align our Firearm Deaths and Age dataset with the CDC data pulls.
+
+***(2)*** Using the ‘Other Deaths’ dataset as a base, we applied Excel’s =VLOOKUP function on the crosswalk to pair each locality with its appropriate FIPS code and health district name.
+
+***(3)*** Some districts had suppressed overall ‘Other Deaths’ values due to privacy concerns for localities with fewer than 10 deaths. To account for this, we used an average of 4 (the midpoint between 1 and 9) as a stand-in, rather than treating these as missing values.
+
+***(4)*** We used STATA to collapse the sum of “Other Deaths” in each locality based on their health district grouping. We also used Microsoft Excel to clean naming mismatches (e.g., Peninsula vs. Penninsula, Loudoun vs. Loundon) and reclassified Roanoke into the Allegheny Health District, following an update from the Virginia Department of Health that wasn’t reflected in the reference PDF we initially used.
+
+***(5)*** Finally, we merged the resulting .csv for each age band with a geocode dataset from the <a href="https://data.virginia.gov/dataset/vdh-health-districts/resource/0185798f-ceb4-4426-acc4-1edfde7a4df2" style="color:purple;"><strong>Virginia Department of Health</strong></a>, marked specifically for the health districts, in R-Studio for plotting our heat map.
+
+```{r Cleaning and Merging Datasets}
+
+## Cleaning data for the 25-34 age range.
+mapping_2534 <- left_join(healthdistrict_vdh_all, firearm_other_vdh_2534, by="HealthDistrict")
+mapping_cleaned_2534 <- mapping_2534 %>% select(-all_of(c("Locality", "Check")))
+
+## Cleaning data for the 15-24 age range.
+mapping_cleaned_1524 <- full_join(healthdistrict_vdh_all, firearm_other_vdh_1524, by="HealthDistrict")
+
+## Cleaning data for the 35-44 age range.
+mapping_cleaned_3544 <- full_join(healthdistrict_vdh_all, firearm_other_vdh_3544, by="HealthDistrict")
+
+## Here, were needed to clean the data by joining the health district (polygon and location) data with our combined (firearm and other mortality) data.
+## Then, we changed the 'Firearm Ratio' outcomes to numeric objects to pull into the heat map gradient afterward. 
+
+mapping_cleaned_2534 <- mapping_cleaned_2534 %>% mutate(`Firearm Ratio` = as.numeric(`Firearm Ratio`))
+
+```
+
+## **Processing the Data**
+
+To calculate the share of firearm fatalities among leading causes of death for each age group, we used the following formula in our Microsoft Excel files: [<strong>(firearm deaths) / (firearm deaths + other deaths) x 100</strong>]{style="color:#CC0000;"}.
+
+# **Final Products: Comparing Firearm Fatalities and Other Fatalities in Virginia**
+
+We chose to use heat maps to visualize firearm fatality ratios across the VDH health districts because they allow the viewer to glean patterns by geography quickly and clearly. Unlike raw death counts, comparing firearm fatalities to other leading causes of death within each district offers more meaningful insight into where gun violence stands as a public health concern. This approach highlight districts where firearm-related deaths are disproportionately high.
+
+The way we structured the freezing and pop-up mechanisms also give us ways to capture and preserve this information, making it easier for researchers and public health professionals to look across health districts and age groups, and compare the respective patterns side-by-side. By creating a separate map for each age group, we are able to show how the burden of firearm fatalities shifts across Virginia residents' life course.
+
+We also privileged a consistent color scheme, moving from light orange to dark purple, and kept the same scale across all maps. This decision allows for accurate comparisons between districts and between different age groups. Darker colors represent higher firearm fatality ratios, making it easy to spot areas where firearm deaths make up a larger share of total deaths
+
+As <a href="https://data-feminism.mitpress.mit.edu/" style="color:purple;"><strong> D’Ignazio and Klein (2020)</strong></a> emphasize in Data Feminism, data visualizations should not only show patterns but also invite emotion and reflection. By mapping firearm fatality ratios at the local level, we aim to move the conversation beyond statistics and toward a more grounded understanding of how gun violence affects real communities.
+
+[<strong>A big thank you to Henry DeMarco, Peter Greubel, and Adam Ashley, as we took inspiration from the map in their project.</strong>]{style="color:#CC0000;"}
+
+## **Heatmap One [15-24 Year Olds]**
+
+```{r Heatmap #1}
+
+## Color Palette and Mapping Foundation [Combined, 15-24] ----
+
+custom_bins <- seq(0, 85, by = 5)
+custom_palette <- grDevices::colorRampPalette(c("#FFCC33", "#CC0000", "#330033"))(length(custom_bins) - 1)
+
+pal <- colorBin(
+  palette = custom_palette,
+  domain = mapping_cleaned_1524$`Firearm Ratio`,
+  bins = custom_bins,
+  na.color = "transparent"
+)
+
+## Retrieving Spatial Status [Combined, 15-24]
+# st_crs(mapping_cleaned_1524)
+mapping_cleaned_1524 <- st_as_sf(mapping_cleaned_1524, wkt="polygon", crs=4326)
+# plot(mapping_cleaned_1524$polygon)
+
+## Heat Map [Combined, 15-24]
+leaflet(mapping_cleaned_1524) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal(`Firearm Ratio`),
+    weight = 1.2,
+    opacity = 1,
+    color = "white",
+    fillOpacity = 0.7,
+    popup = ~paste0(
+      "<strong>Health District:</strong> ", HealthDistrict, "<br>",
+      "<strong>Share of Firearm Deaths:</strong> ", `Firearm Ratio`
+    ),
+    label = ~lapply(
+      paste0(
+        "<strong>Health District:</strong> ", HealthDistrict, "<br>",
+        "<strong>Share of Firearm Deaths:</strong> ", `Firearm Ratio`
+      ),
+      htmltools::HTML
+    ),
+    labelOptions = labelOptions(
+      style = list("font-size" = "12px", "font-weight" = "normal"),
+      direction = "auto"
+    )
+  ) %>%
+  addLegend(
+    pal = pal,
+    values = ~`Firearm Ratio`,
+    title = htmltools::HTML("Share of Firearm<br>Deaths <span style='font-weight:normal;'>(Percentage)</span>"),
+    opacity = 0.7
+  ) %>% 
+  addControl(
+    html = "<div style='text-align:left; font-size:12px; font-weight:bold;'>
+              Interaction Guide: <span style='font-weight:normal;'>Hover over the health district to view its information. Click to freeze it.
+            </div>",
+    position = "bottomleft"
+  ) %>% 
+  addControl(
+    html = "<div style='text-align:left; font-size:14px; font-weight:bold;'>
+              Comparing Firearm Fatalities to Other Leading Deaths (Cardiovascular Disease, Cancer, and Accidents) for 15-24 Year Olds:
+              Interactive Heat Map of Virginia Health Districts
+            </div>",
+    position = "bottomleft"
+  )
+```
+
+## **Heatmap Two [25-34 Year Olds]**
+
+```{r Heatmap #2}
+
+## Color Palette and Mapping Foundation [Combined, 25-34] ----
+
+custom_bins <- seq(0, 85, by = 5)
+custom_palette <- grDevices::colorRampPalette(c("#FFCC33", "#CC0000", "#330033"))(length(custom_bins) - 1)
+
+pal <- colorBin(
+  palette = custom_palette,
+  domain = mapping_cleaned_2534$`Firearm Ratio`,
+  bins = custom_bins,
+  na.color = "transparent"
+)
+
+## Retrieving Spatial Status [Combined, 25-34]  ----
+# st_crs(mapping_cleaned_2534)
+mapping_cleaned_2534 <- st_as_sf(mapping_cleaned_2534, wkt="polygon", crs=4326)
+# plot(mapping_cleaned_2534$polygon)
+
+# Heat Map [Combined, 25-34] ----
+leaflet(mapping_cleaned_2534) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal(`Firearm Ratio`),
+    weight = 1.2,
+    opacity = 1,
+    color = "white",
+    fillOpacity = 0.7,
+    popup = ~paste0(
+      "<strong>Health District:</strong> ", HealthDistrict, "<br>",
+      "<strong>Share of Firearm Deaths:</strong> ", `Firearm Ratio`
+    ),
+    label = ~lapply(
+      paste0(
+        "<strong>Health District:</strong> ", HealthDistrict, "<br>",
+        "<strong>Share of Firearm Deaths:</strong> ", `Firearm Ratio`
+      ),
+      htmltools::HTML
+    ),
+    labelOptions = labelOptions(
+      style = list("font-size" = "12px", "font-weight" = "normal"),
+      direction = "auto"
+    )
+  ) %>%
+  addLegend(
+    pal = pal,
+    values = ~`Firearm Ratio`,
+    title = htmltools::HTML("Share of Firearm<br>Deaths <span style='font-weight:normal;'>(Percentage)</span>"),
+    opacity = 0.7
+  ) %>% 
+  addControl(
+    html = "<div style='text-align:left; font-size:12px; font-weight:bold;'>
+              Interaction Guide: <span style='font-weight:normal;'>Hover over the health district to view its information. Click to freeze it.
+            </div>",
+    position = "bottomleft"
+  ) %>% 
+  addControl(
+    html = "<div style='text-align:left; font-size:14px; font-weight:bold;'>
+              Comparing Firearm Fatalities to Other Leading Deaths (Cardiovascular Disease, Cancer, and Accidents) for 25-34 Year Olds:
+              Interactive Heat Map of Virginia Health Districts
+            </div>",
+    position = "bottomleft"
+  )
+
+```
+
+## **Heatmap Three [35-44 Year Olds]**
+
+```{r Heatmap #3}
+## Color Palette and Mapping Foundation [Combined, 35-44] ----
+
+custom_bins <- seq(0, 85, by = 5)
+custom_palette <- grDevices::colorRampPalette(c("#FFCC33", "#CC0000", "#330033"))(length(custom_bins) - 1)
+
+pal <- colorBin(
+  palette = custom_palette,
+  domain = mapping_cleaned_3544$`Firearm Ratio`,
+  bins = custom_bins,
+  na.color = "transparent"
+)
+
+## Retrieving Spatial Status [Combined, 35-44]  ----
+# st_crs(mapping_cleaned_3544)
+mapping_cleaned_3544 <- st_as_sf(mapping_cleaned_3544, wkt="polygon", crs=4326)
+# plot(mapping_cleaned_3544$polygon)
+
+# Heat Map [Combined, 35-44] ----
+leaflet(mapping_cleaned_3544) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal(`Firearm Ratio`),
+    weight = 1.2,
+    opacity = 1,
+    color = "white",
+    fillOpacity = 0.75,
+    popup = ~paste0(
+      "<strong>Health District:</strong> ", HealthDistrict, "<br>",
+      "<strong>Share of Firearm Deaths:</strong> ", `Firearm Ratio`
+    ),
+    label = ~lapply(
+      paste0(
+        "<strong>Health District:</strong> ", HealthDistrict, "<br>",
+        "<strong>Share of Firearm Deaths:</strong> ", `Firearm Ratio`
+      ),
+      htmltools::HTML
+    ),
+    labelOptions = labelOptions(
+      style = list("font-size" = "12px", "font-weight" = "normal"),
+      direction = "auto"
+    )
+  ) %>%
+  addLegend(
+    pal = pal,
+    values = ~`Firearm Ratio`,
+    title = htmltools::HTML("Share of Firearm<br>Deaths <span style='font-weight:normal;'>(Percentage)</span>"),
+    opacity = 0.7
+  ) %>% 
+  addControl(
+    html = "<div style='text-align:left; font-size:12px; font-weight:bold;'>
+              Interaction Guide: <span style='font-weight:normal;'>Hover over the health district to view its information. Click to freeze it.
+            </div>",
+    position = "bottomleft"
+  ) %>% 
+  addControl(
+    html = "<div style='text-align:left; font-size:14px; font-weight:bold;'>
+              Comparing Firearm Fatalities to Other Leading Deaths (Cardiovascular Disease, Cancer, and Accidents) for 35-44 Year Olds:
+              Interactive Heat Map of Virginia Health Districts
+            </div>",
+    position = "bottomleft"
+  )
+```
+
+# **Closing Remarks**
+
+## **Findings**
+
+The heat maps reveal significant geographic disparities in firearm fatality ratios across Virginia’s health districts. For individuals aged 15–24, the patterns are especially concerning. The Peninsula Health District reports the highest ratio, exceeding 80%, indicating that firearm-related deaths are the leading cause of mortality for this age group in that area. Crater and Richmond City follow with similarly elevated ratios. Urban localities such as Virginia Beach also report high ratios, around 50%. Notably, Lenowisco, a rural district, mirrors Virginia Beach’s rate, suggesting that geographic context alone does not fully explain disparities. In contrast, affluent regions like Loudoun County report much lower ratios (approximately 22%) which may have to do with socioeconomic advantages, better access to services, and lower exposure to gun violence.
+
+For the 25–34 age group, the overall ratios are somewhat lower but remain cause for concern. Richmond City and Norfolk stand out with the highest values, both exceeding 30%, while the majority of health districts fall below 20%. This concentration of firearm fatalities in urban centers may reflect persistent structural challenges, such as economic inequality, housing instability, and gaps in community safety infrastructure.
+
+Among adults aged 35–44, firearm fatality ratios decrease considerably across most districts. The vast majority report ratios below 10%. However, the Peninsula Health District continues to diverge from this pattern, with a markedly high ratio of 52%. This outlier suggests a persistent and localized presence of firearm mortality that needs further investigation.
+
+## **Conclusions**
+
+Our analysis reveals a strikingly high prevalence of firearm-related deaths among individuals aged 15–24, with notably elevated rates also observed among those aged 25–34 and 35-44 in Virginia. These findings underscore the urgent need for targeted interventions that address gun violence as a critical public health issue, particularly for young people. Future research should continue exploring the underlying social, economic, and structural factors contributing to these age-specific disparities, while policymakers must prioritize evidence-based strategies, such as youth violence prevention programs and community support initiatives, to mitigate this alarming trend and protect vulnerable populations. VDH and other organizations should continue gathering this data on an annual basis, and determine what, if any, long-term impacts Virginia’s 2020 firearm reform package and the federal BSCA have on firearm-related deaths in the Commonwealth.
