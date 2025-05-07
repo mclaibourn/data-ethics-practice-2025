@@ -4,7 +4,7 @@ Final deliverables for Public Interest Data: Ethics & Practice
 
 Using public use microdata to estimate and analyze economic self-sufficiency in the Charlottesville region
 
-* [Economic Sufficiency in the Charlottesville Region](https://mclaibourn.github.io/data-ethics-practice-2025/projects/projedt_submission_0501.html), Sarah Barnett, Jordan Phan, and Sarah Kirk
+* [Economic Sufficiency in the Charlottesville Region](https://mclaibourn.github.io/data-ethics-practice-2025/projects/project_submission_0501.html), Sarah Barnett, Jordan Phan, and Sarah Kirk
 * [Self Sufficiency Final Report](https://mclaibourn.github.io/data-ethics-practice-2025/projects/SelfSufficiency_FinalReport.html), Jacob Moore, Jaynae Wright, Mariama Mohamed Sani, and Justice Demby
 
 Gun violence in Virginia, expanding regional gun violence work 

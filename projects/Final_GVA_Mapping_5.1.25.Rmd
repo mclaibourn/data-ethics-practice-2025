@@ -1,0 +1,370 @@
+---
+title: "Mapping of Gun Violence Incidents In Virginia from 2015-2024"
+author: "By Charlie Sewell, Libby Miles, Helen Do"
+date: "May 1st, 2025"
+output: 
+  html_document:
+    theme: simplex
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(ggimage)
+library(janitor)
+library(leaflet)    
+library(stringr)
+library(tidygeocoder)
+library(tidycensus)
+library(leafgl)
+library(htmlwidgets)
+library(RColorBrewer)
+library(sf)
+library(tigris)
+library(rcartocolor)
+
+gva_incidents <- read_csv("../data/gva_incidents_virginia.csv")
+gva_officerinvolved_virginia <- read_csv("../data/gva_officerinvolved_virginia.csv")
+gva_participants_virginia <- read_csv("../data/gva_participants_virginia.csv")
+```
+
+## Our Goals
+
+Our group seeks to better understand Virginia gun violence and its relationship with economic hardship. We map gun violence incidents in Virginia through the years of 2015-2025, and view this alongside census tract level data of poverty. We are able to visualize how an areas poverty level correlates with incidences of gun violence. Understanding both the historical and contemporary relationship between poverty and gun violence offers insight into holistic policy solutions. 
+https://www.gunviolencearchive.org/methodology
+
+## About The GVA Data
+
+The datasets we use contain the addresses of general incidents (2015-2024), the genders and age groups of all of the participants in each incident (2014-2025), and the same demographic information for participants in officer-involved incidents (2014-2025).
+
+Founded in 2013, the GVA is focused on understanding crime at a street level, providing crime statistics broken down to the Congressional District and State legislator district level.
+
+“To that end [they] utilize automated queries, manual research through over 7,500 sources from local and state police, media, data aggregates, government and other sources daily.”
+
+GVA definition of "Gun Violence": Gun Violence describes the results of all incidents of death or injury or threat with firearms without pejorative judgment within the definition. Violence is defined without intent or consequence as a consideration. To that end a shooting of a victim by a subject/suspect is considered gun violence as is a defensive use or an officer involved shooting. The act itself, no matter the reason is violent in nature.
+
+```{r}
+# gva_incidents_tgc <- gva_incidents %>% 
+#   mutate(address = str_c(address, city_or_county, sep = ", "))  
+
+#This puts the city or county on the end of the address. We got syntax from chatGPT.
+
+# gva_incidents_tgc <- gva_incidents_tgc %>% 
+#   mutate(address = str_c(address, "Virginia, United States of America", sep = ", ")) 
+
+# gva_incidents_tgc <- gva_incidents_tgc %>%
+#     geocode(address = address, method = 'arcgis', lat = latitude, long = longitude)
+# 
+# saveRDS(gva_incidents_tgc, file = "data/gva_incidents_tgc.RDS")
+
+va_geo_arcgis <- readRDS("data/gva_incidents_tgc.RDS")
+
+# va_geo_arcgis %>% 
+ # summarise(
+   # missing_lat = sum(is.na(latitude)))
+
+map_va_goated <- va_geo_arcgis %>% 
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+```
+### Preliminary Map of GVA in Virginia
+```{r}
+map_basic <- leaflet() %>% 
+  addProviderTiles("CartoDB.Positron") %>% 
+  addCircleMarkers(data = map_va_goated,
+                   radius = 10,  #Expanded radius for clickability
+                   fillColor = "red",
+                   fillOpacity = 0.3,
+                   stroke = TRUE,  #This gives the circles an outline
+                   weight = 1,
+                   color = "white",
+                   opacity = 1,
+                   popup = paste0("Address: ", va_geo_arcgis$address, "<br>",
+                                  "Victims Killed: ", va_geo_arcgis$victims_killed, "<br>",
+                                  "Victims Injured: ", va_geo_arcgis$victims_injured, "<br>",
+                                  "Suspects Killed: ", va_geo_arcgis$suspects_killed, "<br>",
+                                  "Suspects Injured: ", va_geo_arcgis$suspects_injured, "<br>",
+                                  "Suspects Arrested: ", va_geo_arcgis$suspects_arrested, "<br>"))
+map_basic
+```
+## About the American Community Survey (ACS) 5-year Data (2009-2023)
+
+https://www.census.gov/data/developers/data-sets/acs-5year.html
+
+The American Community Survey (ACS) is an ongoing survey that provides data every year—giving communities the current information they need to make important decisions. The ACS covers a broad range of topics about social, economic, housing, and demographic characteristics of the U.S. population.
+
+```{r}
+# v <- load_variables(2022, "acs5", cache = TRUE)
+#   v_tract <-  v %>% 
+#     filter(geography == "tract")
+  
+  #B17026_001 is fruitful
+
+#Creating the poverty ratios for families in census tracts variables
+
+# vars <- c(total_surveyed = "B17026_001",
+#            under_.50 = "B17026_002",
+#            from_.50_to_0.74= "B17026_003",
+#             from_.75_to_0.99 = "B17026_004",
+#             from_1.00_to_1.24 = "B17026_005",
+#             from_1.25_to_1.49 = "B17026_006",
+#             from_1.50_to_1.74 = "B17026_007",
+#             from_1.75_to_1.84 = "B17026_008",
+#             from_1.85_to_1.99 = "B17026_009",
+#             from_2.00_to_2.99 = "B17026_010",
+#             from_3.00_to_3.99 = "B17026_011",
+#             from_4.00_to_4.99 = "B17026_012",
+#             from_5.00_plus = "B17026_013")
+
+# Getting tract (sub-county) data
+
+# tract_pov <- get_acs(geography = "tract",
+#                 state = "51",
+#                 year = 2022,
+#                 var = vars,
+#                 survey = "acs5",
+#                 output = "wide",
+#                 cache_table = TRUE)
+
+# Saving and loading the data, so we do not need a census API key [The Application Programming Interface (API) provides a standardized way to request data directly from Census Bureau servers].
+
+# saveRDS(tract_pov, file = "data/tract_pov.RDS")
+
+tract_pov <- readRDS("data/tract_pov.RDS")
+
+# Creating a ratio estimate of those under the poverty line.
+
+tract_pov <- tract_pov %>% 
+  mutate(under_1.00E = ((under_.50E + from_.50_to_0.74E + from_.75_to_0.99E)/total_surveyedE))
+
+# Creating a ratio margin of error of those under the poverty line.
+
+tract_pov <- tract_pov %>% 
+  mutate(under_1.00M = ((under_.50M + from_.50_to_0.74M + from_.75_to_0.99M)/total_surveyedM))
+
+# Getting our tracts from Tigris
+
+va_tracts <- tracts(state = "51", cb = TRUE, year = 2022, progress_bar = FALSE)
+
+# Putting tracts onto Census data
+
+va_geo_pov <- tract_pov %>% 
+  left_join(va_tracts,
+            by = c("GEOID" = "GEOID"))
+
+# Telling RStudio that we are using a map
+
+#We had to run the next three commands, get the warning message, then do the st_transform to get this to work. Running just st_transform does not work. 
+
+# st_crs(va_geo_pov)
+
+va_geo_pov <- va_geo_pov %>% 
+  st_as_sf(crs = 4326)
+
+va_geo_pov <- st_transform(va_geo_pov, 4326)
+
+va_geo_pov <- va_geo_pov %>%
+  mutate(poverty_capped = pmin(under_1.00E * 100, 60))
+
+#Creating year and deaths
+
+va_geo_arcgis <- va_geo_arcgis %>%
+  mutate(
+    year = year(date),
+    deaths = victims_killed + suspects_killed
+  )
+```
+### Virginia Census Tract Map
+"Census Tracts are small, relatively permanent statistical subdivisions of a county or statistically equivalent entity that can be updated by local participants prior to each decennial census as part of the Census Bureau’s Participant Statistical Areas Program (PSAP)...Census tracts generally have a population size between 1,200 and 8,000 people, with an optimum size of 4,000 people. A census tract usually covers a contiguous area; however, the spatial size of census tracts varies widely depending on the density of settlement"[^1].
+```{r}
+leaflet() %>% 
+  addProviderTiles("CartoDB.Positron") %>% 
+  addPolygons(data = va_geo_pov,
+              fillColor = " E69F00",
+              fillOpacity = 0.8,
+              weight = 2, 
+              opacity = 1,
+              color = "white")
+```
+```{r}
+#setting color pal
+
+pal <- colorNumeric(
+  palette = carto_pal(15, "BluGrn"),
+  domain = c(0, 60),  # Set fixed scale from 0 to 60%
+  reverse = FALSE
+)
+
+pal_year <- colorFactor(
+  palette = carto_pal(name = "Prism", n = length(unique(va_geo_arcgis$year))), 
+  domain = unique(va_geo_arcgis$year)
+)
+
+pal_deaths <- colorBin(
+  palette = brewer.pal(5, "Reds"),  # <-- Stronger, deeper reds
+  bins = c(0, 1, 2, 5, 10, 13),
+  domain = va_geo_arcgis$deaths
+)
+```
+### Virginia Poverty Rate Map
+We used the variable B17026_001: “Ratio of Income to Poverty Level of Families in the Past 12 Months”
+
+The income-to-poverty ratio is calculated by dividing a household’s income by the poverty threshold for that household’s size and composition. A ratio less than 1 indicates the household is below the poverty line, while a ratio of 1 or more indicates the household is above the poverty line. For example, a ratio of 1.25 means the household’s income is 25% higher than the poverty threshold.
+
+In this map, the darker green census tracts indicate a higher poverty rate. 
+```{r}
+leaflet() %>% 
+  addProviderTiles("CartoDB.Positron") %>% 
+  addPolygons(data = va_geo_pov,
+              fillColor = ~pal(poverty_capped),
+              fillOpacity = 0.8,
+              weight = 2, 
+              opacity = 1,
+              color = "white",
+              popup = ~paste0("Poverty Rate: ", round(poverty_capped, 2), "%")
+  ) %>% 
+  addLegend("topleft", pal = pal, values = va_geo_pov$poverty_capped, 
+            title = "% of Families Under Poverty Line", opacity = 0.7)
+```
+
+## Gun Violence in Virginia by Poverty Rate Interactive Map
+Here we combine the poverty rate by census tract map with the GVA data to create an interactive map that allows the viewer to toggle data to include year or number of death information.
+
+```{r}
+#Adding a jitter to the points so that we can reduce overlap. 
+#There was also an issue with the double creation of pionts. So I added information from va_geo_arcgis to our dataset with geometry
+map_va_goated <- map_va_goated %>%
+  mutate(geometry = st_jitter(geometry, amount = 0.00001),
+         deaths = victims_killed + suspects_killed,
+          year = year(date))
+#Creating year and deaths
+
+#Creating Map
+leaflet() %>% 
+  addProviderTiles("CartoDB.Positron") %>% 
+  addPolygons(data = va_geo_pov,
+              fillColor = ~pal(poverty_capped),
+              fillOpacity = 0.4,
+              weight = 2, 
+              opacity = 1,
+              color = "white",
+              popup = ~paste0("Poverty Rate: ", round(poverty_capped, 2), "%")) %>% 
+  addLegend("topleft", pal = pal, values = va_geo_pov$poverty_capped, 
+            title = "% of Families Under Poverty Line", opacity = 0.7) %>% 
+  addCircleMarkers(data = map_va_goated,
+                 radius = 10, #Expanded radius for clickability.
+                 fillColor = "red",
+                 fillOpacity = 0.35,
+                 stroke = TRUE, #This gives the circles an outline
+                 weight = 1,
+                 color = "white",
+                 opacity = 1,
+                 popup = paste0("Year: ", map_va_goated$year, "<br>",
+                                "Total Deaths: ", map_va_goated$deaths, "<br>",
+                                "Address: ", map_va_goated$address)) %>% 
+#Setting toggles for year and deaths
+addCircleMarkers(data = map_va_goated,
+                 group = "Color by Year",
+                 radius = 10,
+                 fillColor = ~pal_year(year),
+                 fillOpacity = 0.6,
+                 stroke = TRUE,
+                 color = "white",
+                 weight = 1,
+                 popup = paste0("Year: ", map_va_goated$year, "<br>",
+                                "Total Deaths: ", map_va_goated$deaths, "<br>",
+                                "Address: ", map_va_goated$address)) %>%
+
+  addCircleMarkers(data = map_va_goated,
+                   group = "Color by Deaths",
+                   radius = 10,
+                   fillColor = ~pal_deaths(deaths),
+                   fillOpacity = 0.6,
+                   stroke = TRUE,
+                   color = "white",
+                   weight = 1,
+                   popup = paste0("Year: ", map_va_goated$year, "<br>",
+                                  "Total Deaths: ", map_va_goated$deaths, "<br>",
+                                  "Address: ", map_va_goated$address)) %>%
+  addLegend("bottomright", pal = pal_year, values = map_va_goated$year,
+            title = "Year", group = "Color by Year") %>%
+
+  addLegend("bottomright", pal = pal_deaths, values = map_va_goated$deaths,
+            title = "Total Deaths", group = "Color by Deaths") %>%
+
+  # Add toggle control
+  addLayersControl(
+    overlayGroups = c("Color by Year", "Color by Deaths"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
+
+### Contextualizing what we see
+
+Neighborhoods of concentrated disadvantage, defined as  “a collection of community harms including high levels of poverty, unemployment, family disruption, youth disengagement, and racial segregation,” is a predictor of community violence[^2]. Low income areas have routinely shown higher rates of gun violence than higher income areas [^3][^4]. Areas of high income disparity, those with high incomes living closely with those of lower income, have also been shown to have higher rates of violence. Additionally, household poverty has been shown to have less of a significant impact on youth gun violence than overall neighborhood economic disadvantage[^5].
+
+Understanding how poverty levels and economic disadvantage contribute to gun violence allows a window of opportunity for interventions”[^6]. Directly changing the contexts and environments that promote firearm violence is a potentially potent solution to explore in reducing the persistent problem of firearm violence in the United States”[^6]. Studies have shown that urban cities that experience high firearm violence rate also experience high levels of poverty and blight. Recent policy initiatives have explored how community environment revitalization efforts such as implementing green spaces and renovating abandoned building can show positive effects on reducing gun violence in urban areas [^6].
+
+### Redlining Implications
+
+The ties between poverty levels of community and gun violence are not without much nuance. Stratification between race and age creates a more holistic understanding of how economic pressure may contribute to a community’s experience of gun violence. Much of the high poverty levels we see in our visualizations were created by redlining policies in the early to mid 1900’. Redlining was a racially motivated practice which denied people of color economic resources to secure housing in higher economic areas[^7]. This practice, perpetuated by the federal government, created a cycle of poverty for communities of color that is visible today[^8]. This cycle of poverty lends itself to the concentrated disadvantage we see featured by worse mental and physical health outcomes, employment levels, and rates of community violence. We see in Virginia, the long term impacts of redlining in Richmond, Hampton Roads and Roanoke[^9].You are encouraged to zoom in on these areas and compare what you see to the redlining maps below.  
+
+#### Redlining in Richmond
+```{r echo=FALSE, out.width = "60%", fig.align = "center"}
+
+knitr::include_graphics("redliningrichmond.jpg")
+
+```
+
+#### Redlining in Hampton Roads
+```{r echo=FALSE, out.width = "60%", fig.align = "center"}
+
+knitr::include_graphics("Redlininghamptonraods.png")
+
+```
+
+#### Redlining in Roanoke
+```{r echo=FALSE, out.width = "60%", fig.align = "center"}
+
+knitr::include_graphics("redliningroanoke.jpg")
+
+```
+For More information on redlining in Virginia, see: https://dsl.richmond.edu/panorama/redlining.
+
+More generally, we can utilize a socio-ecological model which serves as a lens to better understand gun violence. This model uses individual, relationship, community and societal layers to explain the complexities and nuance of gun violence[^10].
+
+```{r echo=FALSE, out.width = "80%", fig.align = "center"}
+
+knitr::include_graphics("socioecologicalmodel.jpg")
+
+```
+
+## References
+
+[^1]:U.S. Census Bureau. (n.d.). Geography program glossary. U.S. Department of Commerce. https://www.census.gov/programs-surveys/geography/about/glossary.html#par_textimage_13
+
+[^2]: Semenza, D. C., Stansfield, R., Silver, I. A., & Savage, B. (2023). Reciprocal Neighborhood Dynamics in Gun Violence Exposure, Community Health, and Concentrated Disadvantage in One Hundred US Cities. Journal of urban health : bulletin of the New York Academy of Medicine, 100(6), 1128–1139. https://doi.org/10.1007/s11524-023-00796-x
+
+[^3]: Aufrichtig, A., Beckett, L., Diehm, J., & Lartey, J. (2017, January 9). Want to fix gun violence in America? go local. The Guardian. https://www.theguardian.com/us-news/ng-interactive/2017/jan/09/special-report-fixing-gun-violence-in-america
+
+[^4]: Johnson, B. T., Sisti, A., Bernstein, M., Chen, K., Hennessy, E., Acabchuk, R., & Mastos, M. (2021a, July). Community-level factors and incidence of gun violence in the United States, 2014–2017. Social Science & Medicine. https://www.sciencedirect.com/science/article/abs/pii/S0277953621003014?casa_token=st53CWAldA4AAAAA%3ACt0e-DtxkYgQV1JgkJLSeCFLRs0PjEdp5Oin5K8tFB6pwF9_-6e6PUndTAFUR4CgOzczOaJQ7Q 
+
+[^5]: Johnson, B. T., Sisti, A., Bernstein, M., Chen, K., Hennessy, E., Acabchuk, R., & Mastos, M. (2021a, July). Community-level factors and incidence of gun violence in the United States, 2014–2017. Social Science & Medicine. https://www.sciencedirect.com/science/article/abs/pii/S0277953621003014?casa_token=st53CWAldA4AAAAA%3ACt0e-DtxkYgQV1JgkJLSeCFLRs0PjEdp5Oin5K8tFB6pwF9_-6e6PUndTAFUR4CgOzczOaJQ7Q
+
+[^6]: Branas, C. C., Kondo, M. C., Murphy, S. M., South, E. C., Polsky, D., & MacDonald, J. M. (2016). Urban Blight Remediation as a Cost-Beneficial Solution to Firearm Violence. American Journal of Public Health, 106(12), 2158–2164. https://doi-org.proxy1.library.virginia.edu/10.2105/AJPH.2016.303434
+
+[^7]: Gross, T. (2017, May 3). A “forgotten history” of how the U.S. government segregated America. NPR. https://www.npr.org/2017/05/03/526655831/a-forgotten-history-of-how-the-u-s-government-segregated-america
+
+[^8]: Appel, I., & Nickerson, J. (2016). Pockets of poverty: The long-term effects of redlining. SSRN. https://ssrn.com/abstract=2852856
+
+[^9]: Redlining in Virginia. ArcGIS. https://www.arcgis.com/apps/View/index.html?appid=909e8528cd3a4df190756596dcf5d693
+
+[^10]: Gillum, T. L., Hampton, C. J., & Coppedge, C. (2024). Using the Socio-Ecological Model to Understand Increased Risk of Gun Violence in the African American Community. Psychological Reports, 128(1), 126-148. https://doi-org.proxy1.library.virginia.edu/10.1177/00332941241256635
