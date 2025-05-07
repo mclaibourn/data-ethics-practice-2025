@@ -1,0 +1,991 @@
+---
+title: "Economic Sufficiency in the Charlottesville Region"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    code_folding: hide
+date: "2025-04-30"
+author: "Sarah Barnett, Jordan Phan, & Sarah Kirk"
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# 1. Loading packages and data 
+
+```{r}
+library(tidyverse)
+library(geomtextpath)
+library(janitor)
+library(dplyr)
+library(scales)
+library(car)
+library(report)
+library(ggthemes)
+library(ggimage)
+library(plotly)
+library(reactable)
+library(reactablefmtr)
+library(rcartocolor)
+
+pums_household <- read_csv("../data/cvl_acspums_household_5year.csv")
+
+pums_person <- read_csv("../data/cvl_acspums_person_5year.csv")
+
+budget <- read_csv("../data/cvlregion_epi_familybudget.csv")
+
+livingwage <- read_csv("../data/cvlregion_mitlivingwagestandards.csv")
+
+sufficiency <- read_csv("../data/cvlregion_uwselfsufficiencystandards.csv")
+county_standards <- read_csv("../data/county_standards.csv")
+budget_long <- read_csv("../data/cvl_budget_long.csv")
+budget_region <- read_csv("../data/cvl_budget_region.csv")
+cvl_pums <- read_csv("../data/cvl_pums.csv")
+cvl_pums_standards <- read_csv("../data/cvl_pums_standards.csv")
+livingwage_income <- read_csv("../data/livingwage_income.csv")
+livingwage_region <- read_csv("../data/livingwage_region.csv")
+region_standards <- read_csv("../data/region_standards.csv")
+
+options(scipen = 999)
+
+```
+
+# 2. Defining Our Work 
+
+
+## Overview of Data Sets
+
+### Budget
+
+Data set comes from the Economic Policy Institute's (EPI) family budget calculator 
+Link: <https://www.epi.org/resources/budget/>
+
+
+### Living wage 
+
+Data set comes from MIT's Living Wage Calculator (based on 2025 data) Link: <https://livingwage.mit.edu/>
+
+
+### Sufficiency
+
+Data comes from the University of Washington's Economic Self-Sufficiency Standards Calculator (based on 2021 data)
+Link: <https://selfsufficiencystandard.org/>
+
+
+### pums_household 
+
+Data comes from the United States' Census Bureau's American Community Survey (ACS)Public Use Microdata Sample (PUMS)
+Link (to data dictionary): <https://www2.census.gov/programs-surveys/acs/tech_docs/pums/data_dict/PUMS_Data_Dictionary_2017-2021.pdf>
+
+
+### pums_person
+
+Data comes from the United States' Census Bureau's American Community Survey (ACS) Public Use Microdata Sample (PUMS) 
+Link (to data dictionary): <https://www2.census.gov/programs-surveys/acs/tech_docs/pums/data_dict/PUMS_Data_Dictionary_2017-2021.pdf>
+
+
+## Focus of this Project
+
+For this project, we expand upon the work completed by the Orange Dot Report. This iterative report for the Charlottesville region describes the gap between families’ income and their self-sufficiency standards, and develops strategies to create pathways to self-sufficiency for families [1], [2]. From the description for this project and research on the “Living Wage Movement”, we choose to focus on two points: identifying families (or households) below self-sufficiency with conditional thresholds derived from family composition and description of the personal, family, household, work, and occupational characteristics of struggling families. The central theme of the project became **family composition** as it relates to personal/household income and **economic sufficiency** in the Charlottesville region [3].
+
+We also wanted to take into account the differences between the three available sufficiency standards. They are the Economic Policy Institute’s Family Budget Calculator, MIT’s Living Wage Calculator, and the University of Washington’s Economic Self-Sufficiency Standards Calculator. Each identifies family composition as an important factor in determining self-sufficiency, but each defines the significance of certain demographic characteristics differently in determining a family/individual’s income outcome.
+
+
+## Variables of Interest
+
+For the cvl_person and cvl_household dataframes, we made upfront choices about which variables we wanted to analyze. Since the original pums_household and pums_person dataframes, as received from the Census Bureau’s American Community Survey, contained 238 and 290 variables, respectively, we shrunk the scope of the project to a few key variables.
+
+As we primarily focus on economic self-sufficiency at the individual and household levels in the Charlottesville region, we first determine which variables could affect income. Using the 2020 Charlottesville Low-Income Housing Coalition report on affordable housing and its intersection with racism in the city, we know important variables include race and other demographic characteristics (i.e., disability status, education, marital status, language, insurance status, etc.) [4]. Research at the national level supports our focus on, and inclusion of, race/ethnicity, nativity, and other metrics of income variables in our analysis: ⅔ of families working full-time earn enough to cover a basic family budget, but less than ¼ of low-income families meet this same threshold. The wage gap,$11 of extra income per hour for each low-income working family, is exacerbated for African American, Hispanic, and immigrant families. Moreover, whether or not a family receives employee-provided health benefits also varies based on race and income status, with low-income, African American, Hispanic, and immigrant families having less access overall [5].
+
+Other than variables describing individual and household characteristics, we also chose two measures of income to determine whether or not economic self-sufficiency standards are met for people and families living in the Charlottesville region. These two variables are **pincp** and **hincp**. The pincp variable captures a person’s total (annual) income; we utilized this variable when considering individuals who are not married or in a family (i.e., 1 Adult, 0 Children). Using this variable allows us to isolate income to one person regardless of whether or not that person lives with roommates or other income earners (and would therefore not contribute to each other’s incomes). The hincp variable captures total annual household income; we use this variable when considering families who have two income-earners (i.e., a couple) and/or any number of children. Using this variable allows us to take into account multiple individuals’ incomes when considering a household’s economic self-sufficiency.
+
+
+## Salient Questions: 
+
+To guide our analysis, we formulated five questions that encompass each aspect of the project's scope.
+
+1) What are the intersections of living wage, race, and family type?
+
+2) What are the differences in the income standards across the three data sources (budget, livingwage, and sufficiency)? How do these differences intersect with family type?
+
+3) What demographic characteristics indicate a statistically significant difference between mean incomes for residents of the Charlottesville Region?
+
+4) For households with of each family type, how does the median earned income compare to the standards set by the three sources (budget, livingwage, and sufficency)?
+
+5) How does the number of people in a household relate to household earned income? 
+
+
+
+### Comparing Family Types in the Living Wage Standard 
+```{r}
+livingwage_exploration <- livingwage %>% 
+  mutate(mean = rowMeans(livingwage[,-1]))
+  
+ggplot(livingwage_exploration, aes(x = famtype, y = mean)) +
+  geom_col(fill = "cadetblue") +
+  theme_minimal() +
+  labs(title = "Comparing Family Types",
+        subtitle = "Using the MIT Living Wage Standard",
+       x = "Family Type",
+       y = "Mean Living Wage ($)") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5))
+```
+
+This graph uses a mean of all Charlottesville area localities (Charlottesville City, Albemarle County, Nelson County, Louisa County, Fluvanna County, Greene County) to construct an average living wage for the region according to the MIT Living Wage standard. Each Family Type can be read as the number of adults, working adults, and children in a household. For example, a2w2c1 means there are two adults, two working adults, and one child in a household.
+
+
+### Comparing Race in the Living Wage Standard?
+
+In the Charlottesville area, Black/African American people, Alaska Natives, Asian people, and those with "other" race tend to make below the average living wage standard. Charlottesville's highly majority White population (77.8%) makes the overall median income high.
+```{r}
+cvl_pums %>% 
+  group_by(race) %>% 
+  summarize(med_hincp = median(hincp, na.rm = T)) %>% 
+ggplot(aes(x = race, y = med_hincp)) +
+  geom_col(fill = "cadetblue") +
+  geom_textsegment(aes(x = 1,
+                       xend = 6,
+                       y = mean(livingwage_income$income),
+                       yend = mean(livingwage_income$income)),
+                   color = "darkred",
+                   label = "Average Living Wage Standard", linetype = "dashed") +
+  theme_minimal() +
+  scale_x_discrete(labels = label_wrap(8)) + 
+  labs(x = "Race",
+       y = "Median Household Income ($)")
+```
+
+
+# 3. Visualizations of Economic Sufficiency Data, combined with the PUMS Data 
+
+### What are the differences in the income standards across the three data sources (budget, livingwage, and sufficiency)? How do these differences intersect with family type?
+
+<div class = "row">
+<div class = "col-md-6">
+<br><br>
+
+Now that we've combined the economic sufficiency data frames, we can more comprehensively compare incomes across family types, comparing the three different standards to each other and the median household income across the entire cvl_pums dataframe.
+
+
+The family budget and living wage calculators consistently estimate higher incomes than the self-sufficiency standards.
+</div>
+
+<div class = "col-md-6">
+```{r}
+ggplot(region_standards, aes(x = family_type, y = income, fill = source)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(name = "Data Source",
+                    values = c("coral2",
+                               "cadetblue",
+                               "khaki1")) +
+  scale_x_discrete(labels = label_wrap(5)) +
+  theme_minimal() +
+  labs(x = "Family Type",
+       y = "Average Needed Annual Income ($)")
+```
+</div>
+</div>
+
+```{r}
+ggplot(region_standards, aes(x = family_type, y = income, fill = source)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(name = "Data Source",
+                    values = c("coral2",
+                               "cadetblue",
+                               "khaki1")) +
+  geom_textsegment(aes(x = min(family_type),
+                       xend = max(family_type),
+                       y = median(cvl_pums$hincp, na.rm = T),
+                       yend = median(cvl_pums$hincp, na.rm = T)),
+                   color = "darkred",
+                   label = "Median Household Income") +
+  scale_x_discrete(labels = label_wrap(5)) +
+  theme_minimal() +
+  labs(x = "Family Type",
+       y = "Average Needed Annual Income ($)",
+       title = "Median Household Income vs. Recommended Minimum Incomes") +
+  guides(color = "none")
+
+```
+
+
+
+# 4. Statistically Comparing Mean Income Using ANOVA {.tabset}
+
+We want to characterize families and individuals who are either above or below a given standard of living. We considered using regression analysis for this task - however, due to the large number of potentially relevant variables, the time needed to conscientiously select predictors, and the necessity of recoding qualitative variables, regression analysis is outside of the scope of this project. Instead, we use Analysis of Variance to draw conclusions about what demographic groups are meaningfully different from one another by a measure of economic sufficiency.
+
+
+## Income Standard by County, using County Standards data 
+
+We investigate whether any county has a statistically different income level from other counties. If so, we can investigate differences in demographics by county to draw conclusions about how income might be segregated in the Charlottesville area.
+
+```{r}
+ggplot(county_standards, aes(x = county, y = income, color = county)) +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5))
+```
+
+It does not seem likely that one mean will be different.
+
+#### Hypotheses:
+* H0: There is no significant difference in mean income by county
+* Ha: At least one county has a significantly different mean income than the others
+
+#### Assumptions:
+* Independence: We assume independence of variables (i.e. county incomes) has been met. It is possible that the income of one county impacts another: for example, wealthier people in Albemarle might take action to push low-income people into Greene. However, we don't know of any such cases.
+* Normality: sample size is fairly large which should bode well for an assumption of the underlying data being normally distributed.
+* Homogeneity of Variance: The variance (or standard deviation) of the county-level income data should be approximately equal across all groups. This means that the spread or variability of the data should be similar in each group.
+
+#### Testing for Normality 
+```{r}
+normality <- aov(income~county,
+                 data = county_standards)
+
+hist(normality$residuals)
+```
+
+Slightly right skewed but approximately normal
+
+
+```{r}
+qqPlot(normality$residuals,
+       id = F)
+```
+
+Approximately normal
+
+
+#### Testing for Homogeneity
+```{r}
+ggplot(county_standards, aes(x = county, y = income, color = county)) +
+  geom_boxplot()
+```
+
+Roughly same variances
+
+
+#### Performing ANOVA 
+```{r}
+
+county_anova <- aov(income~county,
+                        data = county_standards)
+
+summary(county_anova)
+```
+
+**There is no significant differences in income standard by county.**
+
+
+## Household Income by Race, using cvl_pums_standards
+
+Racial segregation has been a large part of Charlottesville’s history. Charlottesville’s neighborhoods have been extremely redlined, and Black residents of Charlottesville are more likely to be low-income and experience neighborhood displacement [4]. We are interested in exploring if any racial groups experience significantly different household income from one another.
+
+```{r}
+ggplot(cvl_pums_standards, aes(x = race, y = hincp, color = race)) +
+  geom_jitter(show.legend = FALSE) +
+  scale_x_discrete(labels = label_wrap(8))
+
+```
+
+It appears likely that at least white will be different.
+
+
+#### Hypotheses:
+* H0: There is no significant difference in average household income by race
+* Ha: At least one racial group has a significantly different mean household income than the others
+
+#### Assumptions:
+* Independence: We assume independence has been met. 
+* Normality: Sample size is very large, so normality is not required, but we will check anyways.
+* Homogeneity: We will check for a similar variance across racial groups in the data. 
+
+#### Testing for Normality 
+```{r}
+normality <- aov(hincp~race,
+                 data = cvl_pums_standards)
+
+hist(normality$residuals)
+```
+
+Fairly Right-skewed
+
+
+```{r}
+qqPlot(normality$residuals,
+       id = F)
+```
+
+Super curved, thus if sample size was smaller then we'd consider a log transformation. 
+
+
+#### Testing for Homogeneity 
+```{r}
+ggplot(cvl_pums_standards, aes(x = race, y = hincp, color = race)) +
+  geom_boxplot() +
+  scale_x_discrete(labels = label_wrap(8))
+```
+
+Roughly same variances, except for Native, but this makes sense because this category is comprised of several different racial groupings collapsed into one
+
+
+#### Performing ANOVA
+```{r}
+race_anova <- aov(hincp~race,
+                    data = cvl_pums_standards)
+
+summary(race_anova)
+```
+
+**Reject the null hypothesis, thus at least one group's mean household income is significantly different**
+
+```{r}
+report(race_anova)
+```
+
+
+#### Using Tukey's Test to Determine Which Racial Group(s) has a Statistically Different Income 
+```{r}
+TukeyHSD(race_anova, conf.level = .95)
+plot(TukeyHSD(race_anova))
+```
+
+#### Significant differences:
+* Black/Asian 
+* Other/Asian 
+* Native/Asian
+* Two or more races/Black
+* Native/Black
+* White/Black 
+* Other/Native 
+* White/Native 
+* Two or more/Native
+* Two or more/Other 
+* White/Other 
+
+#### Performing Dunnett's Test, with White as the Reference Group 
+```{r}
+library(DescTools) # load this here because it interferes with dplyr
+DunnettTest(cvl_pums_standards$living_wage, cvl_pums_standards$race, control = "White")
+```
+
+**These is a significant differences between Black/White and Other/White.**
+
+Several pairwise comparisons show statistically significant differences in household income between racial groups. Disregarding the Native group with a small sample size, White people in Charlottesville have the highest mean household income which is significantly different from that of Black residents and those in the Other racial category. Black and Other Charlottesville area residents are more likely to have lower household income.
+
+
+## Binary Above/Below Living Wage, by Disability Status
+
+In Charlottesville, those with disabilities are at higher risk of neighborhood displacement and are more likely to be people of color [4]. We are interested in whether those with disabilities, or those with disabilities of a certain type are more likely to be above or below a living wage compared to those without disabilities.
+
+```{r}
+ggplot(cvl_pums_standards, aes(x = disability, y = living_wage, color = disability)) +
+  geom_jitter(show.legend = FALSE) +
+  scale_x_discrete(labels = label_wrap(10)) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5))
+  
+```
+
+
+#### Hypotheses:
+* H0: There is no significant difference in average living wage indicator by disability
+* Ha: At least one disability group has a significantly different average living wage indicator than the others
+
+#### Assumptions:
+* Independence: Independence may not be met because people might have multiple disabilities. We will choose to overlook this issue for now.
+* Normality: Sample size is very large, so normality is not required, but we will check anyways for curiosity.
+* Homogeneity: Check for similar variances in income across disability groupings.
+
+#### Testing for Normality 
+```{r}
+normality <- aov(living_wage~disability,
+                 data = cvl_pums_standards)
+
+hist(normality$residuals)
+```
+
+Unclear distribution 
+
+
+```{r}
+qqPlot(normality$residuals,
+       id = F)
+```
+
+Super curved, thus if sample size was smaller then we'd consider a log transformation.
+
+
+#### Testing for Homogeneity 
+```{r}
+ggplot(cvl_pums_standards, aes(x = disability, y = living_wage, color = disability)) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_x_discrete(labels = label_wrap(10)) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5))
+```
+
+Same variances
+
+#### Performing ANOVA
+```{r}
+disability_anova <- aov(living_wage~disability,
+                         data = cvl_pums_standards)
+
+summary(disability_anova)
+```
+
+**Reject the null hypothesis, thus at least one group's average living wage indicator is significantly different.**
+
+```{r}
+report(disability_anova)
+```
+
+
+#### Using Tukey's Test to Determine Which Disability Group(s) has a Statistically Different Income
+```{r}
+TukeyHSD(disability_anova, conf.level = .95)
+plot(TukeyHSD(disability_anova))
+```
+
+#### Significant Differences:
+* none/ambulatory 
+* none/hearing 
+* none/self-care 
+* none/vision 
+
+#### Performing Dunnett's Test, with No Disability as the Reference Group
+```{r}
+DunnettTest(cvl_pums_standards$living_wage, cvl_pums_standards$disability)
+```
+
+**There are significant differences between all groups and disability.** 
+
+People with all disability types have a lower average living wage indicator than those with no disability. This finding follows national trends and may reflect a lack of social support in the Charlottesville area for people with disabilities, as well as intersectional systemic barriers on the axis of race, as people of color in Charlottesville are more likely to be disabled than White people.
+
+
+## Binary Above/Below Living Wage, by Marital Status 
+
+We are interested in exploring whether other social indicators, such as marital status, are associated with being above or below a living wage. Marital status might act as a proxy for household income, as it’s possible that a married, cohabitating couple could increase a household’s income compared to a single parent. As marital status could also be stratified by racial group and disability status due to systemic barriers that make marriage more difficult or less desirable for certain groups, it’s important to investigate how this status impacts a person’s living wage.
+
+``` {r}
+ggplot(cvl_pums_standards, aes(x = marital, y = living_wage, color = marital)) +
+  geom_jitter(show.legend = FALSE) +
+  scale_x_discrete(labels = label_wrap(10)) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5))
+```
+
+
+#### Hypotheses:
+* H0: There is no significant difference in average living wage indicator by marital status
+* Ha: At least one marital status group has a significantly different average living wage indicator than the others
+
+#### Assumptions:
+* Independence: Assume independence has been met
+* Normality: Sample size is very large, so normality is not required, but we will check anyways for curiosity
+* Homogeneity: Variance of income across marital groups should be similar
+
+#### Testing for Normality 
+```{r}
+normality <- aov(living_wage~marital,
+                 data = cvl_pums_standards)
+
+hist(normality$residuals)
+```
+
+Unclear Distribution
+
+```{r}
+qqPlot(normality$residuals,
+       id = F)
+```
+
+Super curved, thus if the sample size was smaller then we'd consider a log transformation
+
+
+#### Testing for Homogeneity
+```{r}
+# Homogeneity
+ggplot(cvl_pums_standards, aes(x = marital, y = living_wage, color = marital)) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_x_discrete(labels = label_wrap(10)) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5))
+```
+
+Same Variances, except for individuals who are designated as separated, however this is acceptable as (seen below) there are only 164  individuals - out of 12,609 in the full dataframe - that classify themselves as "separated"; and, of these 164, 85 of them have a value of NA for the living wage indicator
+
+
+#### Performing ANOVA
+```{r}
+marital_anova <- aov(living_wage~marital,
+                        data = cvl_pums_standards)
+
+summary(marital_anova)
+```
+
+**We reject the null hypothesis, thus at least one group's average living wage indicator is significantly different.**
+
+```{r}
+report(marital_anova)
+```
+
+
+#### Using Tukey's Test to Determine Which Marital Group(s) has a Statistically Different Income
+```{r}
+TukeyHSD(marital_anova, conf.level = .95)
+plot(TukeyHSD(marital_anova))
+```
+
+#### Significant Differences:
+* married/divorced
+* married/separated 
+* married/widowed 
+* divorced/never married 
+* separated/never married 
+  
+  
+#### Performing Dunnett's Test, with Married as the Reference Group 
+```{r}
+DunnettTest(cvl_pums_standards$living_wage, cvl_pums_standards$marital)
+```
+
+**There are significant differences between all groups and married.**
+
+Those who are married have a significantly different average living wage indicator than all other groups. It is likely that married couples are more likely to be above a living wage, while other groups are more likely to be below a living wage.
+
+
+## Binary Above/Below Living Wage, by Class of Worker
+
+Charlottesville is home to a diverse economy, with many types of employment. We are interested in whether one or more classes of worker is associated with making above or below a living wage.
+
+```{r}
+
+cvl_pums_standards <- cvl_pums_standards %>% 
+  mutate(class_of_worker = as.factor(class_of_worker)) %>% 
+  mutate(class_of_worker = relevel(class_of_worker, ref = "unemployed"))
+
+ggplot(cvl_pums, aes(x = class_of_worker, y = living_wage, color = class_of_worker)) +
+   scale_x_discrete(labels = label_wrap(8)) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 0.5, vjust = 0.5)) +
+  geom_jitter()
+```
+
+#### Hypotheses:
+* H0: There is no significant difference in average living wage indicator by class of worker 
+* Ha: At least one worker class group has a significantly different average living wage indicator than the others
+
+#### Assumptions:
+* Independence: Assume independence has been met
+* Normality: Sample size is very large, so normality is not required, but check anyways for curiosity
+* Homogeneity: Variance of income across worker groups should be similar
+
+#### Testing for Normality 
+```{r}
+normality <- aov(living_wage~class_of_worker,
+                 data = cvl_pums)
+
+hist(normality$residuals)
+```
+
+Unclear distribution
+
+```{r}
+qqPlot(normality$residuals,
+       id = F)
+```
+
+Super curved, thus if sample size was smaller then we'd consider a log transformation
+
+#### Testing for Homogeneity
+```{r}
+ggplot(cvl_pums_standards, aes(x = class_of_worker, y = living_wage, color = class_of_worker)) +
+  geom_boxplot()
+```
+
+Same Variances
+
+#### Performing ANOVA
+```{r}
+cow_anova <- aov(living_wage~class_of_worker,
+                 data = cvl_pums_standards)
+
+summary(cow_anova)
+```
+
+**We reject the null hypothesis, thus at least one group's average living wage indicator is significantly different**
+
+```{r}
+report(cow_anova)
+```
+
+#### Using Tukey's Test to Determine Which Class of Worker Group(s) has a Statistically Different Income
+```{r}
+TukeyHSD(cow_anova, conf.level = .95)
+plot(TukeyHSD(marital_anova))
+```
+
+#### Significant differences:
+* state government/private profit
+* federal government/private profit
+* self employed no income/private profit
+* self employed no income/private nonprofit
+* federal government/local government
+* self employed no income/local government
+* self employed no income/state government
+* self employed no income/federal government
+* self employed no income/self employed with income
+
+
+#### Performing Dunnett's Test, with Unemployed as the Reference Group
+```{r}
+DunnettTest(cvl_pums_standards$living_wage, cvl_pums_standards$class_of_worker)
+```
+
+**There are significant differences between all groups and unemployed except for self employed with no income and family business with no pay**
+
+Several pairwise comparisons showed meaningful differences in the living wage indicator. However, the clearest pattern is among those who are unemployed or who make no income, either while being self-employed or working at a family business with no pay. These groups are more likely to be below a living wage standard.
+
+
+
+# 5. Investigating Living Standard and Income, by Family Type and Number of Individuals in a Household
+
+Next, we turn to family and household types as the axis of analysis. We use categories defined by the Census, which differentiate families from people living together in a household. Families as defined by the Census are a householder and one or more people who are legally related to that householder and who live in the same household. Children being taken care of by adults who are not their legal parents are not considered part of the family, and adults who are not legally related to the household are not considered family. In practice, this means the family types analyzed by this project may systematically exclude certain types of real-world families. Cohabiting but unmarried partners, parents with foster children, and family friends who have been integrated into the family structure are some examples of real-world families that are not considered families by the Census.
+	
+In contrast, households do include individuals who are not legally related to the householder. Therefore, not all households contain families, and family households may have more members than families.
+
+
+### For households with one adult, how does the median earned income compare to the standards set by the three sources (budget, livingwage, and sufficency)?
+```{r}
+one_adult_median <- cvl_pums_standards %>% 
+  filter(family_type == "1 Adults, 0 Children") %>% 
+  pull(pincp) %>% 
+  median(na.rm = T)
+```
+
+```{r}
+region_standards %>%
+  filter(family_type == "1 Adults, 0 Children") %>% 
+  ggplot(aes(x = source, y = income)) +
+  geom_col(width = 0.6, fill = "cadetblue") +
+  geom_hline(yintercept = one_adult_median, linetype = "dashed", color = "darkred", size = 1) +
+  labs(
+    title = "Economic Self-Sufficiency vs. Median Income\n(1 Adult, 0 Children)",
+    x = "Standard Type",
+    y = "Annual Cost (USD)",
+    fill = "Standard"
+  ) +
+  annotate("text", x = 1.5, y = one_adult_median + 5000, label = paste("Median Income: $", round(one_adult_median, 0)), color = "darkred") +
+  theme_minimal()
+```
+For single adult "families"  receiving one income (which includes individuals who live with roommates/other income earners), the median income across all of the Charlottesville region is $31,650. This income level is above the self-sufficiency standard from UWash but is well below the metrics from EPI or MIT. This highlights how individual adults in this region, on average, *are not* earning enough to be considered "economically self-sufficient". 
+
+This being stated, we did not filter out university students living in Charlottesville, who might have a reported income of $0 and thus skewing the median income; yet, there is evidence from the Orange Dot Report 6.0 to suggest that many 1 adult "families" in the Charlottesville region still fall beneath  any of the three metrics of economic self-sufficiency *even when excluding university students* from the analysis [2]. 
+
+
+### For single-parent households with two children, how does the median earned income compare to the standards set by the three sources (budget, livingwage, and sufficency)?
+```{r}
+one_adult_two_child_median <- cvl_pums_standards %>% 
+  filter(family_type == "1 Adults, 2 Children") %>% 
+  pull(hincp) %>% 
+  median(na.rm = T)
+```
+
+```{r}
+region_standards %>%
+  filter(family_type == "1 Adults, 2 Children") %>% 
+  ggplot(aes(x = source, y = income)) +
+  geom_col(width = 0.6, fill = "cadetblue") +
+  geom_hline(yintercept = one_adult_two_child_median, linetype = "dashed", color = "darkred", size = 1) +
+  labs(
+    title = "Economic Self-Sufficiency vs. Median Income\n(1 Adult, 2 Children)",
+    x = "Standard Type",
+    y = "Annual Cost (USD)",
+    fill = "Standard"
+  ) +
+  annotate("text", x = 1.5, y = one_adult_two_child_median + 5000, label = paste("Median income: $", round(one_adult_two_child_median, 0)), color = "darkred") +
+  theme_minimal()
+```
+For single adult families with two children, the median income across all of the Charlottesville region is $60,000. This income level is barely above the self-sufficiency standard from UWash (at 56416.75), but is well below the metrics from EPI or MIT (at 103,100.61 and 102,016.50, respectively). This highlights how single-parent households with two children in the region, on average, *are not* earning enough to be considered "economically self-sufficient". There are many reasons that could be attributed to this, including the fact that single-parents often have to make sacrifices regarding their earning capabilities to take care of their children.
+
+It would be interesting to further explore this finding by taking into account how the age of children in a household affects the income earned by a single parent and/or whether or not the gender of the single-parent affects earnings.  
+
+
+### For housholds with two parents and three children, how does the median earned income compare to the standards set by the three sources (budget, livingwage, and sufficency)?
+```{r}
+two_adult_three_child_median <- cvl_pums_standards %>% 
+  filter(family_type == "2 Adults, 3 Children") %>% 
+  pull(hincp) %>% 
+  median(na.rm = T)
+```
+
+```{r}
+region_standards %>%
+  filter(family_type == "2 Adults, 3 Children") %>% 
+  ggplot(aes(x = source, y = income)) +
+  geom_col(width = 0.6, fill = "cadetblue") +
+  geom_hline(yintercept = two_adult_three_child_median, linetype = "dashed", color = "darkred", size = 1) +
+  labs(
+    title = "Economic Self-Sufficiency vs. Median Income\n(2 Adult, 3 Children)",
+    x = "Standard Type",
+    y = "Annual Cost (USD)",
+    fill = "Standard"
+  ) +
+  annotate("text", x = 1.5, y = two_adult_three_child_median + 5000, label = paste("Median income: $", round(two_adult_three_child_median, 0)), color = "darkred") +
+  theme_minimal()
+```
+For  two parent households with three children (a "typical American" family structure), the median income across all of the Charlottesville region is $117,600. This income level is well above the self-sufficiency standard from UWash (at 80,755.26), slightly above the Living Wage Standard from MIT (at 111,756.50) but is still below the metrics from EPI (at 132,725.24). This highlights how dual-parent households with children in the region, on average, *are* earning enough to be considered "economically self-sufficient" by two different measures. There are many reasons that could be attributed to this difference between the one adult "families" or single-parent families with children, including the fact that dual-parent (i.e., married) households tend to be whiter. Based on our ANOVA analysis, we know that white individuals and married individuals make more money than their unmarried/separated/divorced and/or POC counterparts. 
+
+
+In these three graphs, we are able to conclude a few key aspects of economic self-sufficiency in the Charlottesville Region:
+
+1) Measuring self-sufficiency based on a single metric does not provide the whole story. It is important to include a more holistic view of sufficiency, and one of the best ways to accomplish this is to provide more than one metric.
+
+2) The EPI's Family Budget Calculator consistently "overestimates" how much an individual or family needs to earn to be considered economically self-sufficiency while UWash's Self-Sufficiency Standard consistently "underestimates". The Living Wage Calculator, from MIT, appears to be the best "middle ground" for further analysis that requires one metric be used.
+
+3) On average, families in Charlottesville are not well-off in terms of their economic self-sufficiency, and this phenomenon is exacerbated for single individual hosueholds and single-parent households. 
+
+
+### How does the number of people in a household relate to household earned income? 
+
+We are interested characteristics of families earning living wages, as defined by the Living Wage Standard, as this standard is the one that best captures overall economic self-sufficiency without overestimating or underestimating in the same capacity as the UWash or EPI metrics do.
+
+To begin, The most variation is among households of 3-5 people. Households of 1 person are only single adults, while households of 2 people are overwhelmingly a family with no children, presumably an adult couple. We are curious that there aren't more single parents with one child reflected in the household make-up.
+```{r}
+# create median value
+med_income <- cvl_pums_standards %>% 
+  group_by(family_type) %>% 
+  summarize(samp_total = n(),
+            pop_total = sum(pwgtp),
+            med_income = median(hincp, na.rm = TRUE))
+```
+
+
+```{r}
+fig <- cvl_pums_standards %>% 
+  filter(np <= 9) %>% 
+  ggplot(aes(
+    x = np, 
+    y = hincp, 
+    color = family_type, 
+    text = paste("Race: ", race, "<br>", "Educational Attainment: ", educ_att, "<br>", "Class of Worker: ", class_of_worker, "<br>", "Income: ", ifelse(family_type == "1 Adults, 0 Children", pincp, 
+                 hincp)))) + 
+  geom_jitter(alpha = 0.6) +
+  scale_x_continuous(breaks = c(1,2,3,4,5,6,7,8)) +
+  theme_minimal() +
+  labs(
+    title = "Household Income by Family Size",
+    x = "Number of People",
+    y = "Household Income ($)"
+  )
+
+ggplotly(fig, tooltip = "text")
+```
+
+
+When the graph zooms in on households with 2-5 people and incomes under $500,000, it is easier to see the variation in family structures. 
+```{r}
+fig2 <- cvl_pums_standards %>% 
+  filter(np >=2 & np<=5,
+         hincp<= 500000) %>% 
+  ggplot(aes(x = np, y = hincp, color = family_type,
+   text = paste("Race: ", race, "<br>", "Educational Attainment: ", educ_att, "<br>", "Class of Worker: ", class_of_worker, "<br>", "Income: ", ifelse(family_type == "1 Adults, 0 Children", pincp, 
+                 hincp)))) + 
+  geom_jitter(alpha = 0.5) +
+  theme_minimal() +
+  labs( x = "Number of People",
+       y = "Household Income ($)")
+
+ggplotly(fig2, tooltip = "text")
+```
+
+```{r}
+fig3 <- cvl_pums_standards %>% 
+  filter(np<=5,
+         hincp<= 500000) %>% 
+  ggplot(aes(x = np, y = hincp, color = living_wage,  text = paste("Race: ", race, "<br>", "Educational Attainment: ", educ_att, "<br>", "Class of Worker: ", class_of_worker, "<br>", "Income: ", ifelse(family_type == "1 Adults, 0 Children", pincp,hincp)))) +
+  geom_jitter(alpha = 0.3) +
+  theme_minimal() +
+  facet_wrap(~family_type) +
+  labs( x = "Number of People",
+       y = "Household Income ($)")
+  
+ggplotly(fig3, tooltip = "text")
+```
+
+<div class = "row">
+<div class = "col-md-4">
+<br><br>
+
+To further investigate household structures and their association with earning a living wage, each family type is separated. We could further investigate how the living wage variable is coded, but even without that information, it is easy to see where most households making below $100,000 are not considered to be earning a living wage.
+</div>
+
+<div class = "col-md-8">
+```{r}
+fig4 <- cvl_pums_standards %>% 
+  filter(hincp <= 250000) %>% 
+  ggplot(aes(x = marital, y = hincp, color = living_wage,   text = paste("Race: ", race, "<br>", "Educational Attainment: ", educ_att, "<br>", "Class of Worker: ", class_of_worker, "<br>", "Income: ", ifelse(family_type == "1 Adults, 0 Children", pincp,hincp)))) +
+  geom_jitter(alpha = 0.4) +
+  theme_minimal() +
+  labs(x = "Marital Status",
+       y = "Household Income ($)") +
+  scale_x_discrete(labels = label_wrap(10))
+
+ggplotly(fig4, tooltip = "text")
+```
+</div>
+</div>
+
+These graphics highlight how there is an intersection between the number of people included in a household and the family type of said household. The highest earners tend to be two adult households, which  makes sense when considering how these households could have dual income streams if both individuals are working adults. 
+
+There is an interesting phenomenon that appears in these graphics when looking at the number of people recorded in the cvl_pums data as being within one household versus the number of people that "should be" in the household based on the family type indicator. For example, observations under the "2  Adults, 0 Children" family type are majority classified as having two people in the household, yet there are many observations that show the household containing 3-6/7 people. This could be a result of the way that the family type indicators are constructed or a deeper structural consideration on if two adult households have additional family members (i.e. grandparents, adult children, non-related children) living with them. This could be further explored in additional analysis using the ACS data in combination with the economic self-sufficiency metrics.
+
+
+
+# Conclusions
+
+Building off the work done by previous analyses of the economic self-sufficiency data, we find that many demographic characteristics affect sub-groups’ ability to achieve self-sufficiency when aggregated at the ACS level. While individuals and families who are members of these subgroups may be able to support themselves, on the broader community level, being white, married, not disabled, and having a higher ratio of working family members to non-working family members are associated with meeting cost-of-living standards. Deviations from this norm are associated with lower rates of self-sufficiency. There is no meaningful difference between rates of self-sufficiency across the counties and city that make up the greater Charlottesville region. As identified in the discussion of disability, intersecting identities often contribute to wages below sufficiency standards. This indicates that support systems in the Charlottesville region may be overlooking those who do not meet such a norm.  
+
+We also find interesting disparities between the number of people in a family and the number of people in the household. We expect nuclear families to make up households a large proportion of the time, and while prevalent, this was frequently not the case. While this difference could be created by ambiguous definitions of both terms in the survey, it indicates more complexity in household composition than previously assumed. We recommend further exploration of how families differ from households and how these discrepancies contribute to self-sufficiency. Likely, this question is outside of the scope of the ACS data, but may provide insights into housing choices made in the region. 
+
+Our exploration of the differences in self-sufficiency standards allows direct comparisons to be made between them and offers insights into the tradeoffs of using one versus another to define sufficiency. By identifying these differences, an informed decision can be made to appropriately choose the most accurate metric for the information of interest. For example, the self-sufficiency standard is consistently below the other two metrics for all family types. This is important to know when discussing if and how families meet such thresholds. While the metrics themselves are limited to a theoretical number, eradicating poverty and precarious economic situations in the region is a valuable goal and should be approached with as much information as possible. Further exploration here could explore the sources of these differences between standards, and which populations they may implicitly favor, in comparison with other standards.    
+
+
+
+# References
+
+[1] Schuyler, R., Claibourn, M., LeBoeuf, L., & Mitchell, E. (2022, October 27). *Orange Dot Report 5.0: Family Self-Sufficiency in the Charlottesville Region* [HTML]. GitHub. https://virginiaequitycenter.github.io/orange-dot/OrangeDot5-0.html
+
+[2] Mitchell, E., Claibourn, M., & Schuyler, R. (2024, October 21). *Orange Dot Report 6.0: Family Self-Sufficiency in the Charlottesville Region: Albemarle, Buckingham, Fluvanna, Greene, Louisa, Nelson Counties & the City of Charlottesville, Virginia* [Report]. Charlottesville Equity Atlas. https://virginiaequitycenter.github.io/cville-equity-atlas/reports/orange-dot-6/
+
+[3] Weldon, S. L., & and Targ, H. (2004). From living wages to family wages? *New Political Science, 26*(1), 71–98. https://doi.org/10.1080/0739314042000185139
+
+[4] *The Impact of Racism on Affordable Housing in Charlottesville.* (2020). Charlottesville Low-Income Housing Coalition. https://www.justice4all.org/wp-content/uploads/2020/03/Housing-Report-FINAL.pdf
+
+[5] Joshi, P., Walters, A. N., Noelke, C., & Acevedo-Garcia, D. (2022). Families’ Job Characteristics and Economic Self-Sufficiency: Differences by Income, Race-Ethnicity, and Nativity. *RSF: The Russell Sage Foundation Journal of the Social Sciences, 8*(5), 67–95. https://doi.org/10.7758/RSF.2022.8.5.04
+
+
+
+# Appendix A: Questions For Future Exploration
+
+* What are the intersections of living wage and race? Do counties with majority-minority populations have a higher or lower living wage?
+* How many families are making less than living wage?
+* Are there commonalities that these families share? 
+* How might these families differ from those with the same number of children, level of education, locality, etc.?
+* How does the presence of children in the household affect standard of living?
+* How well do child tax credits recover costs associated with caring for children?
+* What kinds of jobs are generating incomes below self-sufficiency thresholds?
+* How are non-family households included? How do these differ from nuclear families with the same number of people?
+
+
+
+# Appendix B: Additional Details on Each Data Set
+
+## Budget
+
+Data set comes from the Economic Policy Institute's (EPI) family budget calculator 
+Link: <https://www.epi.org/resources/budget/>
+
+* Observations at the sub-family level. Each family has a case id, but every set of parents and children are represented 
+  + Ex. 2p3c is a case ID that represents a family with two parents and three kids
+* Each locality has a budget from 1 parent, 0 children to 2 parents, 4 children
+* Notes county/metro area fips and county/metro name
+* This data set only includes Albemarle County, Fluvanna County, Greene County,Louisa County, Nelson County, and Charlottesville city 
+* Annual budget breakdowns for each family type/locality combination 
+* Broken down into housing, food, transportation, healthcare, other necessities, childcare, taxes, and a total
+* Compared with the federal poverty line and the Supplemental Poverty Measure. 
+
+**Goal of the Data Set:** To measure the income a family needs in order to attain a modest yet adequate standard of living. The budgets estimate community-specific costs for 10 family types (one or two adults with zero to four children) in all counties and metro areas in the United States. 
+
+
+## Living wage 
+
+Data set comes from MIT's Living Wage Calculator (based on 2025 data) Link: <https://livingwage.mit.edu/> 
+
+* Observations at the county/metro/state level
+* Filtered to Albemarle County, Fluvanna County, Greene County, Lousia County, Nelson County, and Charlottesville City
+* Observations broken down by family type with a corresponding case ID
+  + Ex. a2w1c2 represents a family with two adults, only one of which is working, and two children
+* There are observations ranging from 1 adult (1 working adult) and no children to two adults (2 working adults) and three children
+* Annual budget for each family type necessary to meet minimum standards of living across the six localities listed
+* Data only given as a total in this data set
+* The MIT Living Wage Calculator site does give the option to receive more granular data on budget breakdowns: food, childcare, medical, housing, transportation, civic engagement, internet/mobile, other, and taxes
+  
+**Goal of the Data Set** Provide a living wage estimate for different family types across localities in the United States. A living wage is what one full-time worker must earn on an hourly basis to help cover the cost of their family’s minimum basic needs where they live while still being self-sufficient.
+
+
+## Sufficiency
+
+Data comes from the University of Washington's Economic Self-Sufficiency Standards Calculator (based on 2021 data)
+Link: <https://selfsufficiencystandard.org/>
+
+* Observations at the county/metro/state level
+* Filtered to Albemarle County, Fluvanna County, Greene County, Lousia County, Nelson County, and Charlottesville City
+* Observations broken down by family type with a corresponding case ID
+  + Ex. a1i1p2s1t represents a family with one adult (a), one infant (i), two preschoolers (p), zero school age children (s), and zero teen (t)
+* There are observations provided from 1 adult, no children of any age to ten adults and ten children (i.e. there are 719 different family type combinations)
+* Annual self-sufficiency wage for each family type necessary to meet minimum standards of living across the six localities listed
+* Only given as a total in this data set, however the UWash Self-Sufficiency Standard site does give the option to receive more granular data on budget breakdowns: housing, childcare, food, transportation, health care, miscellaneous, taxes, and three different tax credits
+
+**Goal of the Data Set:** The Self-Sufficiency Standard is a budget-based, living wage measure that defines the real cost of living for working families at a minimally adequate level. The Standard is an affordability measure and an alternative to the official poverty measure. The Self-Sufficiency Standard determines the amount of income required for working families to meet basic needs at a minimally adequate level, taking into account family composition, ages of children, and geographic differences in costs.
+
+
+## pums_household 
+
+Data comes from the United States' Census Bureau's American Community Survey (ACS)Public Use Microdata Sample (PUMS)
+Link (to data dictionary): <https://www2.census.gov/programs-surveys/acs/tech_docs/pums/data_dict/PUMS_Data_Dictionary_2017-2021.pdf>
+
+* Each observation represents one household within the Charlottesville region 
+* There are two different PUMAs utilized in this data: Thomas Jefferson Planning District Commission (South & East) and Thomas Jefferson Planning District Commission (North)
+  + Values of -9 in the PUMA10 or PUMA20 columns reference observations where there is not an available PUMA value for that household (in either 2010 or 2020)
+* Each observation contains information on the type of housing unit, how many people live in the unit, number of bed rooms, number of bathrooms, size, and many more
+  + Many of these variables will not be necessary to keep in a cleaned version of the data frame
+* Each observation has a unique serial number that begins with the year the data was collected
+* The data set contains observations over a 5-year span: 2018-2022   
+
+**Goal of the Data Set:** The ACS PUMS files are a set of records from individual people or housing units, with disclosure protection enabled so that individuals or housing units cannot be identified. The Census Bureau’s ACS Public Use Microdata Sample (PUMS) files enable data users to create custom estimates and tables, free of charge, that are not available through pretabulated ACS data products.
+
+
+## pums_person
+
+Data comes from the United States' Census Bureau's American Community Survey (ACS) Public Use Microdata Sample (PUMS) 
+Link (to data dictionary): <https://www2.census.gov/programs-surveys/acs/tech_docs/pums/data_dict/PUMS_Data_Dictionary_2017-2021.pdf>
+
+* Each observation represents one person living within the Charlottesville Region in the 2018-2022 time span
+* There are two different Public Use Microdata Areas (PUMA) utilized in this data: Thomas Jefferson Planning District Commission (South & East) and Thomas Jefferson Planning District Commission (North)
+  + Values of -9 in the PUMA10 or PUMA20 columns reference observations where there is not an available PUMA value for that household (in either 2010 or 2020)
+* Each observation includes information about a person's age, weight, worker class, citizenship, marital status, language, and many more 
+  + Many of these variables will not be necessary to keep in a cleaned version of the data frame, but we will need to use more digression in cleaning this dataframe than the household one due to the higher degree of nuance to each individual 
+* Each observation has a unique serial number that begins with the year the data was collected
+* The data set contains observations over a 5-year span: 2018-2022   
+
+**Goal of the Data Set:** The ACS PUMS files are a set of records from individual people or housing units, with disclosure protection enabled so that individuals or housing units cannot be identified. The Census Bureau’s ACS Public Use Microdata Sample (PUMS) files enable data users to create custom estimates and tables, free of charge, that are not available through pretabulated ACS data products.
+
+
+
+# Appendix C: Additional Details on Joining the Standards Dataframes
+
+The three dataframes in question all contain similar information about how much money a specific family type (i.e. number of adults, working adults, and children of various designations) would need to make in six different localities in the Charlottesville area to live "comfortably". However, there are some differences that must be addressed. 
+
+First, each of the dataframes has a different way to code family type; but, because of the limited amount of information coded into the budget dataframe on family type, we need to par down family type classification systems for the the livingwage and sufficiency dataframes to create on unified system. This coding system will only contain the number of adults and number of children in a household. Moreover, the livingwage dataframe is limited in the number of family types that it contains data on - only up to 2 adults and 3 children, 
+whereas the budget dataframe goes up to 2 parents and 4 children, and the sufficiency dataframe goes up to 10 adults and 10 children. As such, we will have to limit the budget and sufficiency dataframes down to the same 12 family types contained in the livingwage dataframe. 
+
+Additionally, there is some standardization issues regarding the names of localities contained in each of the three dataframes; thus, we will need to remove "County" and "City" words from the sufficiency and budget dataframes and capitalize the names of the localities in the livingwage dataframe - in order to create a standard naming system across each of the dataframes. 
+
+Lastly, in order to join the three dataframes, the sufficiency and livingwage ones will need to be pivoted on their locality columns to create a "longer" dataframe out of each of them that contains one column with locality names, one column with the economic sufficiency standard, and one column with the family type designation. 
+
+
+
+# Appendix D: Nuances with Family Type Indicator
+
+The assigning of family type indicator does have a few issues and nuances. 
+
+First, only families with up to 3 children are given specific indicators because that is the highest number of children that is included in the economic sufficiency standards data. 
+
+Second, many entries in the cvl_pums data were categorized as "a family with children", but the n0c (i.e. number of related children in household) value would be 0; thus these households were not given a family type indicator. On the assumption that there are still children in these households but they were not captured under the noc variable, we chose to include entries that were "a family with children" and simply base the number of children off of the total number of people in the household (i.e. a value of 3 for np would correspond to 2 Adults, 1 Children family type).
+
+Third, the hht (household/family type) variable was utilized to capture cases of single-parent households. This should not be an issue based on how the family status variable was initially coded, but out of an abundance of caution, we wanted to ensure that single-parent households were not being accidentally excluded in any manner.
+
+With these assumptions and the nuances in the dataframe, it is possible that either some families/family types were not captured accurately or there were families/households that were not accounted for at all. 
+
+
