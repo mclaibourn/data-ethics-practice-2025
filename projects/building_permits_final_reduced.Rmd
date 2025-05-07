@@ -1,0 +1,1603 @@
+---
+title: "Final Project: Regional Building Permits"
+author: "Adam Ashley, Henry DeMarco, and Peter Greubel"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Introduction, Motivation, and Guiding Questions
+In this project, we sought to answer the foundational question of whether Virginia communities (particularly the Charlottesville-Albemarle area) are adding enough housing to meet demand adequately. Building upon this broad question, we explored subtopics including housing affordability, housing market conditions, affordable housing development trends, and shifts in building permitting patterns. Our analysis effectively ‘zooms in,’ proceeding from the state, to the regional, to the local level. Shifting between these scales allows for comprehensive comparisons between different communities in the state. If we were to succinctly summarize our findings, we would echo the commonly understood and frequently repeated sentiment that many Virginia communities (particularly in desirable rental markets like the Charlottesville-Albemarle region) are not providing enough housing to keep pace with demand.
+
+# State Trends (Adam Ashley)
+For my contributions to the project, I focused on analyzing trends in the housing market at the state level and identifying supporting literature to back up my quantitative findings.
+
+## Data Overview
+For the bulk of my work in RStudio so far, I have been using Virginia data from the Census Bureau's Building Permits Survey (BPS), which I will refer to from this point on as "VABPS." This dataframe (DF) was previously used for Data Ethics Homework #3. There are 3,203 observations in the VABPS DF, and each observation records the new building permits for a given Virginia county or locality in a given year. The DF includes variables for the number of buildings with 1, 2, 3-4, or 5+ units, as well as the aggregate value of those buildings. There are both imputed and reported versions of these variables (ex, units_1unit vs. units_1unit_rep). The imputed variables constitute values based on the reported variables combined with historical Census data; theoretically, these values would be a more accurate representation of the actual number of housing permits in a given Virginia county in a given year. However, based on my work with the data, there appear to be very few discrepancies between the reported and imputed values for each given observation. However, to ensure the overall accuracy of my analysis, I primarily used imputed values.
+
+For Project Update #3, I also utilized the Zillow Home Value Index (ZHVI) DF, which is provided by Zillow Research. The ZHVI measures the typical home value from a mid-tier housing stock and is seasonally adjusted to indicate changes in property value over time. The DF includes county-level estimates of median home values, reported monthly from 2000 to the present; the ZHVI values are a relatively reliable proxy for measuring housing price trends.
+
+To begin my analysis, I am uploading relevant packages, the VABPS and ZHVI datasets, and cleaning variable names.
+
+``` {r packages}
+library(tidyverse)
+library(janitor)
+library(scales)
+
+vabps <- read_csv("../data/va_building_permits_annual.csv") %>% 
+  clean_names()
+zcounty <- read_csv("../data/county_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv") %>%
+  clean_names()
+```
+
+I am also filtering and reshaping the ZHVI data below.
+
+```{r filter_data}
+zcounty_va <- zcounty %>% 
+  filter(state == "VA")
+```
+
+```{r reshape_data}
+zcounty_va_long <- zcounty %>%
+  filter(state == "VA") %>%
+  pivot_longer(
+    cols = matches("^x\\d{4}_\\d{2}_\\d{2}$"),
+    names_to = "date",
+    values_to = "zhvi"
+  ) %>%
+  mutate(
+    date = str_remove(date, "^x"),
+    date = str_replace_all(date, "_", "-"),
+    date = as.Date(date)
+  )
+
+zhvi_growth <- zcounty_va_long %>%
+  group_by(region_name) %>%
+  summarize(
+    first = first(zhvi[!is.na(zhvi)]),
+    last = last(zhvi[!is.na(zhvi)]),
+    pct_change = (last - first) / first * 100
+  ) %>%
+  arrange(desc(pct_change))
+```
+
+***
+
+## Housing Trends Over Time
+### Yearly Trends in Business Permits Issued
+I am going to begin by aggregating the number of units in a given year, which I can do using the group_by and summarize functions.
+
+```{r vis1prep}
+yearly_trends <- vabps %>% 
+  group_by(survey_date) %>% 
+  summarize(total_units = sum(units_1unit, units_2units, units_34units, units_5punits, na.rm = TRUE))
+```
+
+Now, I am going to use ggplot to construct a line graph, using survey_date as the X variable and total_units as the Y variable. I am also using the geom_vline to make dashed x-intercept lines highlighting important years in the history of the housing market:
+
+**2005:** Probably the most "random" of the years highlighted, but clearly the housing market in VA was already struggling to grow long before the housing market crash in 2008.
+
+**2008:** The housing market crashes, leading to plummeting home prices and a significant increase in foreclosures.
+
+**2012:** The housing market begins to recover, with home prices rising.
+
+**2020:** Temporary dip in housing market at the start of the pandemic, followed by a rapid increase in home prices, low interest rates, and an increased demand for housing.
+
+```{r vis1}
+yearly_trends %>% 
+  ggplot(aes(x = survey_date, y = total_units)) +
+  geom_line(color = "lightblue", size = 1) +
+  geom_point(size = 3, color = "navyblue") +
+  geom_vline(xintercept = 2005, color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 2008, color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 2012, color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 2020, color = "red", linetype = "dashed", size = 1) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal() +
+  labs(title = "Annual Housing Permits Issued in Virginia",
+       x = "Year",
+       y = "Total Housing Units")
+```
+
+The trends in this graph align well with the expected outcomes of the four years. Based on the nature of the events, I would expect 2005 and 2008 to be periods of decrease in new housing permits and 2012 and 2020 to be periods of increase, which is exactly what the graph reflects.
+
+I was particularly interested in what was going on in 2005; as someone who came into this project with a limited understanding of the history of the U.S. housing market, I had never heard the year 2005 come up in discussions-- I feel like you mostly hear about 2008 and beyond. I did some research to get a better idea of what was causing such a profound decrease in the annual number of permits issued. I found an interesting series of slide decks prepared by Robert Puentes from Brookings's Metropolitan Policy Program in 2005, one of which was presented to a Virginia Housing Commission Information Session, and another of which was given to members of the Virginia General Assembly. Puentes characterizes three main issues with the 2005 housing market in Virginia:
+
+1. Housing costs are high and continue to rise.
+2. Sufficient housing is not getting built in the right places.
+3. Housing opportunities vary throughout the state.
+
+Puentes additionally characterizes seven tenets of effective housing policy, stating that solutions implemented should explicitly:
+
+1. Preserve and expand the housing stock.
+2. Make housing affordable and available.
+3. Promote racial/economic diversity and choice.
+4. Help households build wealth.
+5. Strengthen families.
+6. Link housing with supportive services.
+7. Promote economic growth and development.
+
+[Puentes' slide deck can be found here.](https://www.brookings.edu/wp-content/uploads/2016/06/20051205_Vahousing.pdf)
+
+I also found a report from the U.S. Department of Housing and Urban Development Office of Policy Development and Research, which provides data-driven insights into the nationwide housing market in 2005. Interestingly, this report indicates that the production of single-family housing permits reached a record high, which may suggest that the decline captured in our Project Update #1 data visualizations in 2005 was unique to the Commonwealth.
+
+[The HUD report can be found here.](https://www.huduser.gov/periodicals/ushmc/winter05/USHMC_05Q4_summary.pdf)
+
+### Growth Rate of Housing Permits
+Next, I am going to create a pct_change variable using mutate and lag to measure the percent change in the number of total units between years.
+
+```{r vis2prep}
+yearly_trends <- yearly_trends %>% 
+  mutate(pct_change = (total_units - lag(total_units)) / lag(total_units) * 100)
+```
+
+Then, I am using ggplot to create a bar graph that displays the percent change in each year, including a y-intercept line and y = 0 to easily indicate the difference between positive and negative percent changes.
+
+```{r vis2}
+yearly_trends %>% 
+  ggplot(aes(x = survey_date, y = pct_change)) +
+  geom_col(fill = "steelblue") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_minimal() +
+  labs(title = "Year-over-Year Growth in Housing Permits",
+       x = "Year",
+       y = "Percentage Change (%)")
+```
+
+As expected, the period between 2005 and 2010 saw the longest continuous decrease in percent change, with the highest percent changes occurring in 2012, 2013, and 2021.
+
+***
+
+## Single- vs. Multi-Family Housing
+### Single Family vs. Multi-Family Trends Over Time
+I am going to assess how statewide trends in new housing permits differ between single-family units (unit_1unit) and multi-family units (unit_2units, unit_34units, and unit_5punits). To start, I am going to group_by date and create a new housing_type variable using summarize and pivot_longer.
+
+``` {r vis3prep}
+type_trends <- vabps %>% 
+  group_by(survey_date) %>% 
+  summarize(
+    single_family = sum(units_1unit, na.rm = TRUE),
+    multi_family = sum(units_2units, units_34units, units_5punits, na.rm = TRUE)
+  ) %>% 
+  pivot_longer(cols = c(single_family, multi_family), names_to = "housing_type", 
+               values_to = "units")
+```
+
+Now, I am using ggplot to create a line graph comparing the number of new housing permits per year for each housing type. I'm going to add the x-intercept lines on this graph as well.
+
+``` {r vis3}
+type_trends %>% 
+  ggplot(aes(x = survey_date, y = units, color = housing_type)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("single_family" = "blue", "multi_family" = "red")) +
+  scale_y_continuous(labels = comma) +
+  geom_vline(xintercept = 2005, color = "darkgray", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 2008, color = "darkgray", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 2012, color = "darkgray", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 2020, color = "darkgray", linetype = "dashed", size = 1) +
+  theme_minimal() +
+  labs(title = "Single Family vs. Multi-Family Housing Permits in Virginia",
+       x = "Year",
+       y = "Total Units Issued",
+       color = "Housing Type")
+```
+
+From this graph, I can see that the the period of 2005 to 2008 saw decreases for both types of housing, but the effects were far more substantial for single-family units (about five times greater). After 2012, there are relatively parallel trends between the two types of housing, though there is a notable increase in multi-family units between 2020 2022 that wasn't present among single family units.
+
+***
+
+## Top and Bottom Counties
+### Top Counties for New Housing Permits
+Next, I am going to group_by county and use summarize to create a total_units variable. I am using the arrange function to order the observations in descending order by the total_units variable, and using slice_head to drop all observations except for the first ten, effectively maintaining the ten counties with the highest number of total units.
+
+```{r vis4prep}
+top_counties <- vabps %>%
+  group_by(county_name) %>% 
+  summarize(total_units = sum(units_1unit, units_2units, units_34units, units_5punits, na.rm = TRUE)) %>% 
+  arrange(desc(total_units)) %>% 
+  slice_head(n = 10)
+```
+
+I am using ggplot to make a bar graph that displays the top ten counties.
+
+```{r vis4}
+top_counties %>% 
+  ggplot(aes(x = reorder(county_name, total_units), y = total_units, fill = total_units)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  labs(title = "Top 10 Counties by Housing Permits Issued",
+       x = "County",
+       y = "Total Permits Issued")
+```
+
+This graph pretty shows exactly what you would expect the results to be, with most of the counties in the top ten being in the Northern Virginia, Richmond metropolitan, and Hampton Roads regions of Virginia.
+
+### ZHVI Growth: Top and Bottom 10 Counties
+
+```{r vis5}
+top_10 <- zhvi_growth %>%
+  top_n(10, pct_change)
+
+ggplot(top_10, aes(x = reorder(region_name, pct_change), y = pct_change)) +
+  geom_col(fill = "#cd4f39") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Counties by ZHVI Growth Since 2000",
+    y = "Percent Change (%)",
+    x = "County"
+    ) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8))
+```
+
+I am incredibly interested that Petersburg City saw the largest percent change, though it may indicate a larger percent change in metropolitan suburbs, which would explain why Fairfax, Arlington, Falls Church, and Clarke are all on this list as well. Petersburg seeing such prolific growth relative to the other countries on the list could also indicate that a significant portion of housing development occurred in the past 25 years, which would assumedly increase the ZHVI more than areas that were already more relatively developed
+
+```{r vis6}
+bottom_10 <- zhvi_growth %>%
+top_n(-10, pct_change)
+
+ggplot(bottom_10, aes(x = reorder(region_name, pct_change), y = pct_change)) +
+  geom_col(fill = "#4d6d92") +
+  coord_flip() +
+  labs(
+    title = "Bottom 10 Counties by ZHVI Growth Since 2000",
+    y = "Percent Change (%)",
+    x = "County"
+    ) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8))
+```
+
+Unfortunately, it is not particularly surprising that many counties in Southern and Southwestern Virginia have seen the most limited growth in ZHVI rates. I am exceedingly curious as to what exactly was going on in Brunswick County that caused such a notable decrease, as it is the only county in the dataset that saw a decline.
+
+***
+
+## Value Trends
+### Housing Permit Value Trends (Inflation-Adjusted)
+I am going to group_by survey date and create a total_value variable using summarize.
+
+```{r vis7prep}
+value_trends <- vabps %>% 
+  group_by(survey_date) %>% 
+  summarise(total_value = sum(value_1unit, value_2units, value_34units, value_5punits, na.rm = TRUE))
+```
+
+I am using ggplot to create a line graph with survey_date as the X variable and total_value as the Y variable. I am using scales::dollar_format() to aid in visualization, as total_value represents a dollar amount.
+
+```{r vis7}
+value_trends %>% 
+  ggplot(aes(x = survey_date, y = total_value)) +
+  geom_line(color = "limegreen", size = 1) +
+  geom_point(size = 2, color = "darkgreen") +
+  scale_y_continuous(labels = dollar_format()) +
+  theme_minimal() +
+  labs(title = "Total Value of Housing Permits in Virginia",
+       x = "Year",
+       y = "Total Construction Value ($)")
+```
+
+Again, the trends are very much what we would expect based on what we've seen in the previous graphs. It is interesting to note that the increases in value following the the 2005-2010 period are far more significant than the total number of units (i.e., the level of total value by the 2020s was more comparable to that of pre-housing market crash levels than the number of total new units per year, as indicated by this graph and visualization 1).
+
+### Value Per Unit Over Time
+Here, I am creating new variables that represent the value per one-unit unit and the value per multi-unit unit.
+
+```{r vis8prep_a}
+vabps <- vabps %>%
+  mutate(
+    value_per_unit_1unit = value_1unit / units_1unit,
+    value_per_unit_multi = (value_2units + value_34units + value_5punits) / (units_2units + units_34units + units_5punits)
+  )
+```
+
+From there, I am constructing a new DF that takes the average value per one-unit unit and multi-unit unit, grouping by survey date.
+
+```{r vis8prep_b}
+yearly_value_per_unit <- vabps %>%
+  group_by(survey_date) %>%
+  summarize(
+    avg_value_per_unit_1unit = mean(value_per_unit_1unit, na.rm = TRUE),
+    avg_value_per_unit_multi = mean(value_per_unit_multi, na.rm = TRUE)
+  )
+```
+
+Next, I am constructing a line graph that compares the value of the two different categories of units over time.
+
+```{r vis8}
+ggplot(yearly_value_per_unit, aes(x = survey_date)) +
+  geom_line(aes(y = avg_value_per_unit_1unit, color = "Single-Family"), size = 1) +
+  geom_line(aes(y = avg_value_per_unit_multi, color = "Multi-Family"), size = 1) +
+  scale_color_manual(values = c("Single-Family" = "#e65b64", "Multi-Family" = "#5b5992")) +
+  scale_y_continuous(labels = dollar_format()) +
+  theme_minimal() +
+  labs(
+    title = "Average Value Per Unit Over Time",
+    x = "Year",
+    y = "Average Value Per Unit ($)",
+    color = "Housing Type"
+  )
+```
+
+This graph indicates that the average value per unit for both single-family and multi-family units increased between 2000 and 2023. The trends are relatively parallel, though it is clear that following 2020, single-family homes saw a more significant rise in value that multi-family units. This makes sense to me, as the effects of the pandemic likely inclined more Virginians to pursue single-family households over multi-unit dwellings.
+
+### Additional Value Per Unit Analysis
+Here, I am creating a variable counting the aggregate of total units and total value of units, and then creating a variable that indicates the average value per unit. This graph will essentially summarize what we saw in visualization 6, but averaging all types of units together, rather than separating them by one- or multi-unit.
+
+```{r vis9prep_a}
+vabps <- vabps %>%
+  mutate(
+    total_units = units_1unit + units_2units + units_34units + units_5punits,
+    total_value = value_1unit + value_2units + value_34units + value_5punits,
+    value_per_unit_total = total_value / total_units
+  )
+```
+
+```{r vis9prep_b}
+yearly_value_per_unit_total <- vabps %>%
+  group_by(survey_date) %>%
+  summarize(avg_value_per_unit_total = mean(value_per_unit_total, na.rm = TRUE))
+```
+
+```{r vis9}
+ggplot(yearly_value_per_unit_total, aes(x = survey_date, y = avg_value_per_unit_total)) +
+  geom_line(color = "#288b9a", size = 1) +
+  scale_y_continuous(labels = dollar_format()) +
+  theme_minimal() +
+  labs(
+    title = "Overall Average Value per Unit Over Time",
+    x = "Year",
+    y = "Average Value per Unit ($)"
+  )
+```
+
+Again, this graph just summarizes the first graph, but shows general trends in value per unit over time, rather than displaying trends between single-family and multi-family units. Again, the increases are akin to what we would expect, seeing a notable decrease at/around 2008 and a notable increase around 2020.
+
+### Scatter Plot of Units vs. Permit Values
+For this visualization, I am going to create a scatterplot that compares counties based on the number of units an the value of permits in a given year.
+
+```{r vis10}
+ggplot(vabps, aes(x = units_1unit + units_2units + units_34units + units_5punits, y = value_1unit + value_2units + value_34units + value_5punits)) +
+  geom_point(color = "#5b5992", alpha = 0.5) +
+  geom_smooth(method = "lm", color = "#e65b64") +
+  scale_x_continuous(labels = scales::comma) +
+  scale_y_continuous(labels = scales::dollar_format()) +
+  theme_minimal() +
+  labs(title = "Correlation Between Housing Units and Permit Values", x = "Total Housing Units", y = "Total Permit Value ($)")
+```
+
+This scatterplot displays the correlation between the number of total housing units and total permit value. These trends closely align with what we would expect, with most localities having a total annual permit value of around $250M or less, and with few outliers toward the top right quartile of the graph. This graph indicates a relative strong direct relationship between the two variables.
+
+### Deviation from Monthly Statewide ZHVI Median
+
+```{r vis12}
+state_median_monthly <- zcounty_va_long %>%
+  group_by(date) %>%
+  summarize(state_median = median(zhvi, na.rm = TRUE))
+
+zcounty_dev <- zcounty_va_long %>%
+  left_join(state_median_monthly, by = "date") %>%
+  mutate(deviation = zhvi - state_median)
+
+focus_counties <- c("Fairfax County", "Albemarle County", "Buchanan County")
+
+vis3colors<- c(
+  "Fairfax County" = "#5b5992",
+  "Albemarle County" = "#e38c2b",
+  "Buchanan County" = "#6eb482"
+)
+
+zcounty_dev %>%
+  filter(region_name %in% names(vis3colors)) %>%
+  ggplot(aes(x = date, y = deviation, color = region_name)) +
+  geom_line(size = 1.2) +
+  scale_color_manual(values = vis3colors) +
+  labs(
+    title = "County Deviation from Statewide Median ZHVI",
+    y = "Deviation from Median ($)",
+    x = "Date",
+    color = "County"
+  ) +
+  scale_y_continuous(labels = dollar_format()) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "top"
+  )
+```
+
+While both Fairfax and Albemarle county deviated significantly from the state-wide median, the deviation is far more prolific in Fairfax. Buchanan County, located in Southwestern Virginia, started well below the state-wide median and has decreased notable since (it is relative to note that the Buchanan data only starts around the 2012-2014 range).
+
+## Additional Research: How Zoning and Land Use Affects Housing Affordability & Potential Policy Interventions
+I wanted to highlight a very interesting report that I analyzed for the Research Synthesis assignment. The report, titled _The Impact of Zoning on Housing Affordability_, is by Edward L. Glaeser and Joseph Gyourko and was published by the National Bureau of Economic Research as a part of its Working Paper Series in March 2002. Obviously, a good amount of time has passed since its publishing, including many years that involved significant shifts in the housing market due to various factors (see my analysis of Visualization 1), but I thought it was exceedingly relevant to this project nonetheless.
+
+Glaeser and Gyourko synthesize data from several different sources, including RSMeans' data on construction costs in various U.S. metropolitan areas, data from the American Housing Study, and Census data to assess whether the affordable housing crisis is as widespread as some critics claim, or if it is relatively limited to specific geographical areas. A summary of their methodology is outlined below:
+
+1. **Comparison of House Prices to Construction Costs:** The researchers calculated the ratio of house value (AHS, Census) to construction costs (RSMeans) by square foot, and analyzed the distribution of homes priced above and below benchmark construction costs. They specifically looked at the share of homes priced at 40 percent above and 10 percent below benchmark economy construction costs. Adjustments are made to self-reported housing prices (AHS) to account for depreciation and the tendency for homeowners to overestimate their home’s value.
+2. **Hedonic Regression Analysis:** Using 1999 AHS data, the researchers ran hedonic regressions for 26 metropolitan areas to estimate the implicit price of land. In the regressions, the independent variable is land area, and the dependent variable is housing price, both represented by their logarithmic value. Various key housing characteristics were controlled, including the number of bedrooms and bathrooms and whether the home had a garage, fireplace, etc. The coefficient on land area is interpreted to be the marginal value of land to homeowners.
+3. **Calculation of Imputed Land Cost:** The researchers present an alternative measure of land value using the RSMeans and AHS data. This measure is calculated by subtracting a home's estimated construction cost from its reported value and dividing by the lot size. These figures represent the value of land,, including any implicit zoning tax.
+4. **Comparison of Intensive and Extensive Margin Land Prices:** The core of the report’s argument focuses on the impact of zoning, which rests on the significant difference observed between the land prices derived from hedonic regressions (“intensive margin”) and the imputed land costs (“extensive margin”).
+5. **Regression Analysis of Density and Housing Costs:** The study examines the relationship between residential density within key metropolitan cities (logarithmic form of land area per household) and various measures of housing prices (share of expensive homes, median house price, etc.).
+
+The study found no nationwide housing crisis– that is, housing prices are close to or even below the cost of new construction across most of the country. High housing prices significantly exceed construction costs and are concentrated in limited metropolitan areas, such as New York City and several cities across California. The extensive margin estimates were substantially higher than the implicit estimates, which the authors interpret as a significant “zoning tax.” The authors conclude that if policymakers aim to reduce housing costs in expensive metropolitan areas, they should prioritize reforming zoning and land use regulations (which are presently creating barriers to new construction in the private sector), rather than relying on subsidized housing development. Glaeser and Gyourko suggest that zoning reform could notably impact average housing prices.
+
+
+# Regional Trends (Peter Greubel)
+
+1. Our client, the Weldon Cooper Center for Public Service, likes the direction we went with Regional data but has a slightly different naming convention for each region. I will first change our regional variable to reflect our client's geographic conceptualization of Virginia's regions.
+  - Note: this will take us from 9 regions to 8 regions of analysis. 
+
+#### Align with Weldon Cooper Center for Public Service regional breakdown
+
+Region 1 - Central: Albemarle, Amelia, Caroline, Charles City, Chesterfield, Dinwiddie, Fluvanna, Goochland, Greene, Hanover, Henrico, King William, Louisa, Madison, Nelson, New Kent, Orange, Powhatan, and Prince George
+  #and the cities of Charlottesville, Colonial Heights, Hopewell, Petersburg, and Richmond. 
+
+Region 2 - Southside: Brunswick, Buckingham, Charlotte, Cumberland, Greensville Halifax, Henry, Lunenburg, Mecklenburg, Nottoway, Patrick, Pittsylvania, Prince Edward, Southhampton, and Sussex
+  # and the cities of Danville, Emporia, Franklin, and Martinsville
+
+Region 3 - Hampton Roads: Gloucester, Isle of Wight, James City, Mathews, Surry, and York  
+  #and the cities of Chesapeake, Hampton, Newport News, Norfolk, Poquoson, Portsmouth, Suffolk, Virginia Beach and Williamsburg.
+
+Region 4 - Northern:  Arlington, Clarke, Culpeper, Fairfax, Fauquier, King George, Loudoun, Prince William, Rappahannock,  Spotsylvania, Stafford, and Warren.
+  #and the cities of Alexandria, Fairfax, Falls Church, Fredricksburg, Manassas, and Manassas Park.
+
+Region 5 - West Central: Amherst, Apppomattox, Bedford, Botetourt, Campbell, Craig, Floyd, Franklin, Giles, Montgomery, Pulaski, and Roanoke.
+  #and the cities of Lynchburg, Radford, Roanoke, and Salem.
+
+Region 6 - Eastern: Accomack, Essex, King and Queen, Lancaster, Middlesex, Northhampton, Northumberland, Richmond, and Westmoreland
+
+Region 7 - Southwest: Bland, Buchanan, Carroll, Dickenson, Grayson, Lee, Russell, Scott, Smyth, Tazewell, Washington, Wise, and Wythe.
+  #and the cities of Bristol, Galax, Norton 
+
+Region 8 - Valley: Alleghany, Augusta, Bath, Clarke, Frederick, Highland, Page, Rockbridge, Rockingham, and Shenandoah.
+  #and the cities of Buena Vista, Conington, Harrisonburg, Lexington, Staunton, Waynesboro and Winchester.
+
+```{r}
+
+# Create a new variable 'region' based on county_name with corrected regional breakdown
+
+vabps <- vabps %>%
+  mutate(region = case_when(
+    county_name %in% c("Albemarle County", "Amelia County", "Caroline County", "Charles City County", "Chesterfield County", "Dinwiddie County", "Fluvanna County", "Goochland County", "Greene County", "Hanover County", "Henrico County", "King William County", "Louisa County", "Madison County", "Nelson County", "New Kent County", "Orange County", "Powhatan County", "Prince George County", 
+                       "Charlottesville (Independent C", "Colonial Heights (Independent", "Hopewell (Independent City)", "Petersburg (Independent City)", "Richmond (Independent City)") ~ "Central",
+
+    county_name %in% c("Brunswick County", "Buckingham County", "Charlotte County", "Cumberland County", "Greensville County", "Halifax County", "Henry County", "Lunenburg County", "Mecklenburg County", "Nottoway County", "Patrick County", "Pittsylvania County", "Prince Edward County", "Southampton County", "Sussex County",
+                       "Danville (Independent City)", "Emporia (Independent City)", "Franklin (Independent City)", "Martinsville (Independent City") ~ "Southside",
+
+    county_name %in% c("Gloucester County", "Isle of Wight County", "James City County", "Mathews County", "Surry County", "York County",
+                       "Chesapeake(Independent City)", "Hampton (Independent City)", "Newport News (Independent City", "Norfolk (Independent City)", "Poquoson (Independent City)", "Portsmouth (Independent City)", "Suffolk (Independent City)", "Virginia Beach (Independent Ci", "Williamsburg (Independent City") ~ "Hampton Roads",
+
+    county_name %in% c("Arlington County", "Clarke County", "Culpeper County", "Fairfax County", "Fauquier County", "King George County", "Loudoun County", "Prince William County", "Rappahannock County", "Spotsylvania County", "Stafford County", "Warren County",
+                       "Alexandria (Independent City)", "Fairfax (Independent City)", "Falls Church (Independent City", "Fredericksburg(Independent Cit", "Manassas (Independent City)", "Manassas Park (Independent Cit") ~ "Northern",
+
+    county_name %in% c("Amherst County", "Appomattox County", "Bedford County", "Botetourt County", "Campbell County", "Craig County", "Floyd County", "Franklin County", "Giles County", "Montgomery County", "Pulaski County", "Roanoke County",
+                       "Bedford (Independent City)", "Lynchburg (Independent City)", "Radford (Independent City)", "Roanoke (Independent City)", "Salem (Independent City)") ~ "West Central",
+
+    county_name %in% c("Accomack County", "Essex County", "King and Queen County", "Lancaster County", "Middlesex County", "Northampton County", "Northumberland County", "Richmond County", "Westmoreland County") ~ "Eastern",
+    
+    county_name %in% c("Bland County", "Buchanan County", "Carroll County", "Dickenson County", "Grayson County", "Lee County", "Russell County", "Scott County", "Smyth County", "Tazewell County", "Washington County", "Wise County", "Wythe County",
+                       "Bristol (Independent City)", "Galax (Independent City)", "Norton (Independent City)") ~ "Southwest",
+
+    county_name %in% c("Alleghany County", "Augusta County", "Bath County", "Clarke County", "Frederick County", "Highland County", "Page County", "Rockbridge County", "Rockingham County", "Shenandoah County",
+                       "Buena Vista (Independent City)", "Covington (Independent City)", "Clifton Forge (Independent Cit", "Harrisonburg (Independent City", "Lexington (Independent City)", "Staunton (Independent City)", "Waynesboro (Independent City)", "Winchester (Independent City)") ~ "Valley",
+    
+    TRUE ~ "Unknown"
+  ))
+
+
+# View result
+print(vabps[, c("county_name", "region")])
+
+```
+
+After this second naming convention the following cities were not captured, I will have to go back and add them manually:
+
+- Bedford - "Bedford is an incorporated town and former independent city located within Bedford County in the U.S. state of Virginia." -This places Bedford in "West Central"
+
+- Clifton forge - Combined into "Valley" since it is listed online as a part of Alleghany county online
+
+*Note in the initial clean some cities were missed because (Independent City) was not written completely likely due to character limits. They were accounted for once the characters in the actual labels were matched.
+
+
+## Regional: Trends Over Time 
+```{r, setting up}
+# Rename survey_date to year in the first dataset to help with time trend analysis in merge
+vabps <- vabps %>%
+ rename(year = survey_date)
+
+# Step 1: Calculate total permits
+permits_long <- vabps %>%
+  group_by(region, county_fips, year) %>%
+  summarise(
+    single_family_permits = sum(bldg_1unit, na.rm = TRUE),
+    multi_family_permits = sum(bldg_2units, bldg_34units, bldg_5punits, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(single_family_permits, multi_family_permits),
+    names_to = "permit_category",
+    values_to = "total_permits"
+  )
+
+# Step 2: Calculate total value
+values_long <- vabps %>%
+  group_by(region, county_fips, year) %>%
+  summarise(
+    single_family_value = sum(value_1unit, na.rm = TRUE) / sum(units_1unit, na.rm = TRUE),
+    multi_family_value = (sum(value_2units + value_34units + value_5punits, na.rm = TRUE)) /
+      (sum(units_2units + units_34units + units_5punits, na.rm = TRUE)),
+    .groups = "drop" 
+  ) %>%
+  pivot_longer(
+    cols = c(single_family_value, multi_family_value),
+    names_to = "permit_category",
+    values_to = "total_value"
+  )
+
+# Step 3: Make sure names match for join
+permits_long$permit_category <- gsub("_permits", "", permits_long$permit_category)
+values_long$permit_category <- gsub("_value", "", values_long$permit_category)
+
+# Step 4: Join permits + values into final table
+vabps_summary <- left_join(
+  permits_long,
+  values_long,
+  by = c("region", "county_fips", "year", "permit_category")
+)
+
+# Step 5: Create Repeatable Function For Key Years
+important_years <- c(2005, 2008, 2012, 2020)
+
+# + geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1)
+
+
+```
+
+### Regional Permits Issued Over Time
+```{r}
+#To create a data set for all permit types: 
+vabps_regional_summary <- vabps_summary %>%
+  group_by(region, year) %>%
+  summarise(total_permits = sum(total_permits, na.rm = TRUE)) %>%
+  ungroup()
+
+vabps_regional_summary %>%
+  ggplot(aes(x = year, y = total_permits)) +
+  geom_line(aes(group = region), color = "lightblue", size = 1) +  # Ensure lines are grouped by region
+  geom_point(aes(color = region), size = 3) +  # Ensure points are colored by region
+  geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+ # facet_wrap(~ region, scales = "free_y") +  # This will create separate plots for each region
+  labs(title = "Annual Housing Permits Issued in Virginia",
+       x = "Year",
+       y = "Total Housing Permits") +
+  theme(plot.title = element_text(hjust = 0.5)  # <<-- this centers the title
+  )
+
+
+```
+
+Across all regions of Virginia, the number of total permits, regardless of type, are either decreasing or stagnating. 
+
+### Regional Unit Values Over Time
+```{r}
+#To create a data set for all permit types: 
+vabps_regional_summary2 <- vabps_summary %>%
+  group_by(region, year) %>%
+  summarise(total_value = sum(total_value/ 100000, na.rm = TRUE)) %>%
+  ungroup()
+
+vabps_regional_summary2 %>%
+  ggplot(aes(x = year, y = total_value)) +
+  geom_line(aes(group = region), color = "lightblue", size = 1) +  # Ensure lines are grouped by region
+  geom_point(aes(color = region), size = 3) +  # Ensure points are colored by region
+  geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+ # facet_wrap(~ region, scales = "free_y") +  # This will create separate plots for each region
+  labs(title = "Avg. Housing Value per Unit in Virginia",
+       x = "Year",
+       y = "Avg. Value per Unit ($100k USD)") +
+  theme(plot.title = element_text(hjust = 0.5)  # <<-- this centers the title
+  )
+
+```
+
+Across all regions of Virginia, the average cost per unit, regardless of type, is increasing. 
+
+
+## Population data from Weldon Cooper Center ----
+https://www.coopercenter.org/virginia-population-estimates
+
+```{r, weldon cooper population data}
+# download estimates
+# download.file("https://www.coopercenter.org/sites/default/files/2025-01/VA-Intercensal-Estimates_2000-2010.xls",
+#               destfile = "data/wcc_popest_2000-2010.xls")
+# download.file("https://www.coopercenter.org/sites/default/files/2025-01/VA-Intercensal-Estimates_2010-2020_UVA-CooperCenter_Updated-2023-01.xlsx",
+#               destfile = "data/wcc_popest_2010-2020.xlsx")
+# download.file("https://www.coopercenter.org/sites/default/files/2025-01/VA-Intercensal-Estimates_2020-2024_UVA-CooperCenter.xlsx",
+#               destfile = "data/wcc_popest_2020-2024.xlsx")
+
+# read in
+# pop2000s <- read_excel("../data/wcc_popest_2000-2010.xls",
+#                        skip = 3)
+# pop2010s <- read_excel("../data/wcc_popest_2010-2020.xlsx",
+#                        skip = 4)
+# pop2020s <- read_excel("../data/wcc_popest_2020-2024.xlsx",
+#                        skip = 4)
+
+# format
+# pop2000s <- pop2000s %>% 
+#   rename(fips = `...1`, locality = `...2`, 
+#          census00 = `...3`, census10 = `...14`) %>%
+#   filter(!is.na(fips))
+# 
+# pop2010s <- pop2010s %>% 
+#   rename(fips = `...1`, locality = `...2`, 
+#          census10 = `...3`) %>%
+#   filter(!is.na(fips))
+# 
+# pop2020s <- pop2020s %>% 
+#   rename(fips = `...1`, locality = `...2`, 
+#          census20 = `...3`) %>%
+#   filter(!is.na(fips), !is.na(locality))
+
+# make long
+# pop2000s_long <- pop2000s %>% 
+#   select(-c("census00", "census10")) %>% 
+#   pivot_longer(-c("fips", "locality"),
+#                names_to = "year", values_to = "pop")
+# 
+# pop2010s_long <- pop2010s %>% 
+#   select(-c("census10", "2020")) %>% 
+#   pivot_longer(-c("fips", "locality"),
+#                names_to = "year", values_to = "pop")
+
+# and fix locality names
+# pop2020s_long <- pop2020s %>% 
+#   select(-c("census20")) %>% 
+#   pivot_longer(-c("fips", "locality"),
+#                names_to = "year", values_to = "pop") %>% 
+#   mutate(locality = str_remove(locality, "\\*"),
+#          locality = if_else(as.numeric(fips) < 500, 
+#                             paste0(locality, " County"),
+#                             paste0(locality, " City")),
+#          locality = str_replace(locality, "City City", "City"))
+
+# Combine, create change var, and save
+# popest <- bind_rows(pop2000s_long, pop2010s_long, pop2020s_long) %>% 
+#   mutate(year = as.numeric(year)) %>% 
+#   arrange(locality, year) %>% 
+#   group_by(locality) %>% 
+#   mutate(pop_change = pop - lag(pop),
+#          percent_pop_change = (pop_change/lag(pop)*100)) %>% 
+#   ungroup()
+# 
+# write_csv(popest, "../data/virgina_locality_popestimates.csv")
+popest <- read_csv("../data/virgina_locality_popestimates.csv")
+```
+
+Now to merge the Weldon Cooper (popest) data with the Vabps Data
+```{r, merging population data in }
+
+####Using Vabps_summary data instead of most recently created set because it allows for examination of single and multi family housing information separately. 
+
+
+# Model ----
+# combine vabps_summary and popest
+vabps_pop <- vabps_summary %>% 
+  left_join(popest, by = c("county_fips" = "fips", "year" = "year")) %>% 
+  mutate(region = factor(region),
+         permit_category = factor(permit_category))
+```
+
+
+## Regional: Single Family vs. Multi-Family Units 
+
+Now include year identifiable permit information by a binary permit type to regional data so that permits by year per region can be captured for this analysis and once the data is merged. 
+```{r, sinlge vs multi family cleaning }
+
+#Single family vs. multi-family analysis cleaned
+sf_mf_regional <- vabps_pop %>%
+  group_by(region, year, permit_category) %>%
+  summarize(total_permits = sum(total_permits, na.rm = TRUE),
+            log_total_permits = log(total_permits + 1), # Add 1 to avoid log(0)
+            total_value = sum(total_value / 100000, na.rm = TRUE)) %>%
+  ungroup()
+
+```
+
+### Regional Housing Permits Issued by Single or Multi-Family Units
+```{r, single vs multi permits}
+# Plot for examining trends in single- and multi-family units PERMITS over time
+ggplot(sf_mf_regional, aes(x = year, y = log_total_permits, color = permit_category)) +
+  geom_line(size = 1) +
+  geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1) +
+  facet_wrap(~ region, scales = "free_y") +
+  labs(title = "Regional Trends in Housing Permits Issued",
+       x = "Year", 
+       y = "Total Permits Issued",
+       color = "Permit Category") +
+  theme(plot.title = element_text(hjust = 0.5)  # <<-- this centers the title
+  )
+
+```
+From these graphs the information we gain is that both single-family and multi-family units across regions have remained relatively constant with a potential slight decline in some regions. Without renters information on unit occupancy, we likely can only conclude from this that single family units have gone down or been converted, but not much in terms of new housing for either unit type is being built. 
+
+
+### Average Unit Value in Regional Housing by Single-Family or Multi-Family Units
+```{r, single vs. multi value}
+# Plot for examining trends in single- and multi-family units VALUE over time
+
+ggplot(sf_mf_regional, aes(x = year, y = total_value, color = permit_category)) +
+  geom_line(size = 1) +
+  geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1) +
+  facet_wrap(~ region, scales = "free_y") +
+  labs(title = "Regional Trends in Housing Permit Value",
+       x = "Year", 
+       y = "Total Permit Value ($100,000 USD)",
+       color = "Permit Category") +
+  theme(plot.title = element_text(hjust = 0.5)  # <<-- this centers the title
+  )
+
+```
+These graphics demonstrate that as time has increased the value of both types of units have steadily increased (single family units more drastically. This mirrors a trend that most Virginians see when they are looking for housing. Costs have grown increasingly and there are less options available. This trend indicates that housing in Virginia is becoming less and less affordable while also being more scarce. 
+
+
+
+## Regional: Housing Permits vs. Unit Values vs. Population Change
+
+### Examining correlations between housing permits and housing values
+```{r}
+# Load libraries
+library(broom)
+library(glue)
+library(modelsummary)
+
+# Create time-variant correlations
+
+# 1. Single-family permits: correlation by year
+sf_corr_time <- vabps_pop %>%
+  filter(permit_category == "single_family") %>%
+  group_by(year) %>%
+  summarize(correlation = cor(total_permits, total_value, use = "complete.obs")) %>%
+  ungroup()
+
+# 2. Multi-family permits: correlation by year
+mf_corr_time <- vabps_pop %>%
+  filter(permit_category == "multi_family") %>%
+  group_by(year) %>%
+  summarize(correlation = cor(total_permits, total_value, use = "complete.obs")) %>%
+  ungroup()
+
+# Plot the change in correlation over time by permit category
+
+# Single-family correlation trend
+ggplot(sf_corr_time, aes(x = year, y = correlation)) +
+  geom_line(color = "steelblue") +
+  geom_point() +
+  labs(title = "Single-Family Permits vs Value Correlation Over Time",
+       x = "Year", y = "Correlation") +
+  theme_minimal()
+
+# Multi-family correlation trend
+ggplot(mf_corr_time, aes(x = year, y = correlation)) +
+  geom_line(color = "darkred") +
+  geom_point() +
+  labs(title = "Multi-Family Permits vs Value Correlation Over Time",
+       x = "Year", y = "Correlation") +
+  theme_minimal()
+
+```
+
+Regardless of permit category the correlation between housing permits and housing value is relatively weak. This information means that there is likely another factor driving this rise in housing cost and the decrease in housing availablity. 
+
+
+### Is housing supply keeping up with population growth in Virginia (regionally)?
+```{r, population and housing supply}
+
+# Step 1. first create living expenses variable as a function of housing value and housing permits: i.e. likely average annual expenditure on rent.
+
+#### living expense = average unit value normalized by population
+living_data <- vabps_pop %>%
+  mutate(
+    avg_unit_value = total_value / total_permits,      # average value per unit
+    living_expense = avg_unit_value / pop,              # living expense per person
+    permits_per_1000 = (total_permits / pop) * 1000      # permits per 1000 residents
+    )  
+
+# Graph 1. Housing Supply Pressure Over Time by Region (Permits per 1,000 People) 
+
+# Line plot showing population change over time by region
+# Average permits per 1000 people by region and year
+living_data %>%
+  group_by(region, year) %>%
+  summarize(mean_permits_per_1000 = mean(permits_per_1000, na.rm = TRUE)) %>%
+  ggplot(aes(x = year, y = mean_permits_per_1000, color = region)) +
+  geom_line(size = 1) +
+  facet_wrap(~ region, scales = "free_y") +
+  labs(
+    x = "Year", 
+    y = "Mean Permits per 1,000 People", 
+    title = "Housing Supply Pressure Over Time by Region",
+    color = "Region"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5)  # <<-- this centers the title
+  )
+
+
+
+# Graph 2. HPopulation Growth vs. Housing Expense Burden (Per 1,000 People) ----
+
+# Scatterplot of permits per 1000 vs. percent pop change
+living_data %>%
+  ggplot(aes(x = permits_per_1000, y = percent_pop_change, color = region)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~region) +
+  labs(
+    x = "Permits per 1,000 People", 
+    y = "Percent Population Change",
+    title = "Population Growth vs. Housing Expense (Permits per 1,000 People)",
+    color = "Region"
+  )+
+  theme(plot.title = element_text(hjust = 0.5)  # <<-- this centers the title
+  )
+
+
+```
+Per 1000 people in every region there is 6 or less housing permits issued per year. 
+
+```{r, pop change and living expense over time}
+
+# install.packages("plotly")
+library(plotly)
+
+# Graph 3. Are Housing Permits Keeping Up with Population Growth? (By Region and Year)
+
+# Step 1: Clean the data for animation
+clean_living_data <- living_data %>%
+  filter(
+    !is.na(permits_per_1000),
+    !is.na(percent_pop_change),
+    is.finite(permits_per_1000),
+    is.finite(percent_pop_change)
+  )
+
+# Step 2: Ensure year is a factor
+clean_living_data <- clean_living_data %>%
+  mutate(year = as.factor(year))
+
+# Step 3: Create the animated plot
+plot <- plot_ly(
+  data = clean_living_data,
+  x = ~permits_per_1000,
+  y = ~percent_pop_change,
+  color = ~region,
+  frame = ~year,
+  type = 'scatter',
+  mode = 'markers',
+  marker = list(size = 10, opacity = 0.6)
+) %>%
+  layout(
+    title = "Population Change vs. Permits per 1,000 People (Toggle by Year)",
+    xaxis = list(title = "Permits per 1,000 Residents"),
+    yaxis = list(title = "Percent Population Change", tickformat = ".1%"),
+    hovermode = "closest"
+  ) %>%
+  animation_opts(
+    frame = 1000,
+    transition = 300,
+    redraw = FALSE
+  ) %>%
+  animation_slider(
+    currentvalue = list(prefix = "Year: ", font = list(color = "black"))
+  )
+
+# Step 4: Display
+plot
+
+
+```
+
+# Charlottesville-Albemarle Trends (Henry DeMarco)
+
+```{r libraries and data}
+
+# Load libraries
+library(leaflet)
+library(rcartocolor)
+library(sf)
+
+vabps <- readRDS("../data/vabps.RDS") %>%
+  clean_names()
+
+cvl_home_permits <- readRDS("../data/cvl_home_permits.RDS")
+
+lihtc <- read.csv("../data/LIHTCPUB.csv")
+
+# Filter to Cville
+lihtc_cville <- lihtc %>% 
+  filter(proj_cty == "CHARLOTTESVILLE") %>% 
+  filter(yr_alloc > 2000)
+
+# Filter to VA
+lihtc_va <- lihtc %>% 
+  filter(proj_st == "VA") %>% 
+  filter(yr_alloc > 2000) %>% 
+  filter(yr_pis > 2000) %>% 
+  filter(yr_pis < 8000) # Dealing with entry error
+
+rm(lihtc)
+# va_counties <- counties(state = "51", cb = TRUE, year = 2020)
+  # Source: tigris package
+  # Note: tigris not functional as of 4.7.25, preventing this data from being loaded
+
+# Workaround: manually downloaded data from https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2020&layergroup=Counties+%28and+equivalent%29
+
+# Load the full national counties shapefile
+counties_all <- st_read("../data/counties/tl_2020_us_county.shp")
+
+# Filter for Virginia (state FIPS code "51")
+va_counties <- counties_all %>% filter(STATEFP == "51")
+
+rm(counties_all)
+
+# Leaflet map files
+# lihtc_map <- st_read("../data/lihtc_map.gpkg")
+vabps_map <- st_read("../data/vabps_map.gpkg")
+  
+# Redfin data
+redfin_local <- read.csv("../data/redfin_local.csv")
+redfin_local_pop <- read.csv("../data/redfin_local_pop.csv")
+
+```
+
+## Overview: Local Trends
+
+This section explores trends in the Charlottesville-Albemarle region related to housing permitting (both issued permits and applications), affordable housing developments, and housing market conditions (such as home sales and inventory). Using a variety of data analysis and visualization approaches, this analysis seeks to answer the following questions for Charlottesville and Albemarle County:
+
+- How have the number of annual permits issued changed throughout the period from 2000 to 2003?
+-How do permitting trends compare for different types of buildings? Single-family versus multi-family?
+- How has the proportion of multi-unit to single-unit permits changed over time?
+- Do trends in permit applications reflect patterns in permit issuance over the same period?
+- How have average fees per permit application changed over time for different building types?
+- Is Charlottesville providing enough new affordable units? How does the local supply of affordable units compare to Virginia as a whole?
+- How do trends in local housing market conditions (in terms of home sales, listings, and inventory) help contextualize the need for new housing development in the area?
+
+This analysis draws on a variety of datasets, including:
+- Virginia building permit data
+- Charlottesville building permit application data
+- American Community Survey data (accessed through the tidycensus package)
+- LIHTC (low income housing tax credit) data
+-Redfin data
+
+Data sources can be found here:
+[Charlottesville Building Permit Survey](https://opendata.charlottesville.org/datasets/charlottesville::building-permits/about)
+[Census Bureau Building Permit Survey](https://www.census.gov/construction/bps/current.html)
+[Census Bureau Building Permit Survey](https://www2.census.gov/econ/bps/Master%20Data%20Set/)
+[LIHTC Data](https://lihtc.huduser.gov/)
+[Redfin Housing Data](https://www.redfin.com/news/data-center/)
+[Census Bureau Data](https://data.census.gov)
+
+This analysis underscores a commonly-understood and widely-repeated reality: new housing development in the Charlottesville-Albemarle region is currently not keeping up with the scale of need. Several common trends emerge from the different analyses included below: in general, permitting for many building types in the region peaked in the early 2000s (2000-2005), and many building permit types declined precipitously around 2020, before recovering in the years following the onset of the COVID-19 pandemic (2021-2024). At the same time, the local housing market is characterized by high demand and dwindling supply, which is contributing to huge increases in housing costs.
+
+## Trends in Building Permits Issued
+
+### Sum of Building Permits Over Time, Charlottesville & Albemarle
+
+Albemarle County's summed building permits have consistently exceeded Charlottesville's between 2000 and 2023. Charlottesville’s building permits reached their highest peak around 2007. Both Charlottesville and Albemarle saw marked declines in total building permits in the years following the 2008 Recession. Albemarle’s building permits reached their highest peaks around 2005 and 2020.
+
+```{r VABPS: Analyzing Sum of Building Permits Over Time}
+
+# Basic line graph: (2000-2024), Sum of Building Permits; Charlottesville & Albemarle
+important_years <- c(2005, 2008, 2012, 2020)
+
+vabps %>% 
+  filter(county_fips %in% c("003", "540")) %>%
+  mutate(county = factor(county_fips,
+                         labels = c("Albemarle", "Charlottesville"))) %>% 
+  select(bldg_sum, survey_date, county) %>% 
+  ggplot(aes(x = survey_date, y = bldg_sum, color = county)) +
+  geom_line() +
+  geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "Sum of Building Permits Over Time",
+       subtitle = "Charlottesville & Albemarle County (2000-2023)",
+       x = "Survey Date", y = "# of Building Permits", color = "County") +
+  theme_minimal()
+
+```
+<div class = "row">
+<div class = "col-md-6">
+
+### 1-Unit Building Permits Over Time, Charlottesville & Albemarle
+
+The chart for 1-unit building permits in Charlottesville and Albemarle County over the same period is nearly identical to the chart with total permits, which illustrates the dominance of single-family units within the region's housing market.
+
+```{r VABPS: Analyzing 1-Unit Building Permits Over Time}
+
+# Basic line graph: (2000-2024), 1-unit Permits
+
+vabps %>% 
+  filter(county_fips %in% c("003", "540")) %>%
+  mutate(county = factor(county_fips,
+                         labels = c("Albemarle", "Charlottesville"))) %>% 
+  select(units_1unit, survey_date, county) %>% 
+  ggplot(aes(x = survey_date, y = units_1unit, color = county)) +
+  geom_line() +
+  geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1) +
+  labs(title = "1-Unit Building Permits",
+       subtitle = "Charlottesville & Albemarle County (2000-2023)",
+       x = "Survey Date", y = "# 1-Unit Permits", color = "County") +
+  geom_smooth(method = "lm", se = FALSE) +
+    theme_minimal()
+
+```
+</div>
+
+
+<div class = "col-md-6">
+
+### 2+ Unit Building Permits Over Time, Charlottesville & Albemarle
+
+Annual 2+ unit permits were highest in Albemarle County from 2000 to 2005, and lower than Charlottesville in 2015. Annual 2+ unit permits increased in both Charlottesville and Albemarle from 2020 to 2021, before declining again.
+
+```{r VABPS: Analyzing 2+ Unit Building Permits Over Time}
+
+# Basic line graph: (2000-2024), 2+ unit permits
+
+  # New variable: two_plus_sum (sum of 2+ unit building permits)
+  vabps <- vabps %>% 
+    rowwise() %>% 
+    mutate(two_plus_sum = sum(bldg_2units, bldg_34units, bldg_5punits)) %>% 
+    ungroup()
+  
+  vabps %>% 
+    filter(county_fips %in% c("003", "540")) %>%
+    mutate(county = factor(county_fips,
+                           labels = c("Albemarle", "Charlottesville"))) %>% 
+    select(two_plus_sum, survey_date, county) %>% 
+    ggplot(aes(x = survey_date, y = two_plus_sum, color = county)) +
+    geom_line() +
+    geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1) +
+    labs(title = "Sum of 2+ Unit Building Permits",
+         subtitle = "Charlottesville & Albemarle County (2000-2023)",
+         x = "Survey Date", y = "# Bulding Permits", color = "County") +
+    geom_smooth(method = "lm", se = FALSE) +
+    theme_minimal()
+  
+```
+</div>
+</div>
+  
+### Proportion of Multi to Single-Unit Building Permits Over Time, Charlottesville & Albemarle
+
+The proportion of annual multi-unit to single-unit building permits has consistently been higher in Charlottesville than Albemarle County from 2000-2023. There are distinct peaks in this proportion in Charlottesville in 2004, 2012-2015, and 2021.
+
+Future analyses could investigate building permits over time on a per-capita basis, revealing how new housing development in the region responded to population growth from 2000 to 2023.
+  
+```{r VABPS: Analyzing Proportion of Multi-Unit to Single-Unit Building Permits Over Time}
+
+# Proportion of multi to single unit building permits over time
+  # Generating new variable
+  
+   vabps <- vabps %>% 
+    rowwise() %>% 
+    mutate(prop_multi_unit = (two_plus_sum / bldg_1unit)) %>% 
+    ungroup()
+
+  vabps %>% 
+    filter(county_fips %in% c("003", "540")) %>%
+    mutate(county = factor(county_fips,
+                           labels = c("Albemarle", "Charlottesville"))) %>% 
+    select(prop_multi_unit, survey_date, county) %>% 
+    ggplot(aes(x = survey_date, y = prop_multi_unit, color = county)) +
+    geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1) +
+    geom_line() +
+    labs(title = "Proportion of Multi-Unit to Single-Unit Building Permits",
+         subtitle = "Charlottesville & Albemarle County (2000-2023)",
+         x = "Survey Date", y = "Proportion of Multi-Unit to Single Permits", color = "County") +
+    theme_minimal()
+
+```
+
+## Trends in Building Permit Applications
+
+### Single-Family and Apartment Permit Applications Over Time, Charlottesville
+
+Apartment/condo/multistory unit permit applications overtook single-family applications for the first time from 2008-2024 in 2023. This coincides with the approval of Charlottesville's revised zoning ordinance, which allows for the creation of more multi-unit developments.
+
+```{r Charlottesville Building Permit Applications Analysis}
+
+ cvl_home_permits %>% 
+        group_by(year, work_description) %>%
+        filter(work_description %in% c("Single Family Detached", "Apartment/Condo/Multistory Unit")) %>%
+        select(work_description, year) %>% 
+        summarize(permits = n()) %>%
+        ggplot(aes(x = year, y = permits, color = work_description)) +
+        geom_line() +
+        geom_vline(xintercept = important_years, linetype = "dashed", color = "red", size = 1) +
+        labs(title = "Charlottesville Building Permit Applications Over Time",
+             subtitle = "Charlottesville (2008-2024)",
+           x = "Year",
+           y = "Number of Permits",
+           color = "Work Description") +
+      theme_minimal()
+
+
+```
+
+### Building Permit Fee Analysis, Charlottesville
+
+The average fee per single-family home permit steadily increased from 2008-2020, before massively increasing in the years from 2020-2024.
+
+The average fee per apartment/condo/multistory unit permit fluctuated over time, perhaps reflecting annual variation driven by the differences in fee costs depending on the number of units in given developments.
+
+The next stage of analysis will be to integrate CPI data, to produce inflation-adjusted versions of these charts.
+
+<div class = "row">
+<div class = "col-md-6">
+```{r Charlottesville Building Permit Fees Analysis}
+
+# Average fee per single family permit
+      
+      cvl_home_permits %>% 
+        group_by(year, work_description) %>%
+        filter(work_description %in% c("Single Family Detached")) %>% 
+        summarize(
+         fee_sum = sum(fee),
+         permits = n(),
+         fee_avg = fee_sum / permits
+       ) %>% 
+        ggplot(aes(x = year, y = fee_avg)) +
+        geom_line(color = "#90A9B7") +
+        theme_minimal() +
+        labs(title = "Average Fee per Single Family Permit",
+             subtitle = "Charlottesville (2008-2024)",
+             x = "Year",
+             y = "Average Permit Fee")
+```
+</div>
+<div class = "col-md-6">
+```{r Charlottesville Building Permit Fees Analysis, continued}
+# Average annual fee per apartment/condo/multistory unit permit? 
+      
+      cvl_home_permits %>% 
+        group_by(year, work_description) %>%
+        filter(work_description %in% c("Apartment/Condo/Multistory Unit")) %>% 
+        summarize(
+          fee_sum = sum(fee),
+          permits = n(),
+          fee_avg = fee_sum / permits
+        ) %>% 
+        ggplot(aes(x = year, y = fee_avg)) +
+        geom_line(color = "#9A7197") +
+        theme_minimal() +
+        labs(title = "Average Fee per Multi-Unit Permit",
+             subtitle = "Charlottesville (2008-2024)",
+             x = "Year",
+             y = "Average Permit Fee")
+```
+</div>
+</div>
+## LIHTC Project Analyses, Charlottesville & Virginia
+
+The average annual number of units per LIHTC project in Charlottesville was highest in 2000, and second highest in 2014. The average annual units per LIHTC project in Charlottesville has been declining from 2020 to 2022. On average, the number of units per LIHTC project in Charlottesville has decreased from 2000-2022.
+
+The average annual number of units per LIHTC project in Virginia as a whole was highest in 2000, and second highest in 2022, with a major recovery from 2021 to 2022. On average, the number of units per LIHTC project in Virginia has decreased from 2000-2022.
+
+<div class = "row">
+<div class = "col-md-6">
+```{r Charlottesville LIHTC Projects Analyses}
+
+# Preparing data
+
+  # Units per project, per year, Charlottesville
+  
+  lihtc_cville %>%
+        group_by(yr_pis) %>%
+        summarize(
+          project = n(),
+          total_units = sum(n_units)) %>%
+        mutate(units_yr = total_units / project) %>% 
+        ggplot(aes(x = yr_pis, y = units_yr)) +
+        geom_line(color = "#455767") +
+        geom_smooth(method = "lm", se = FALSE, color = "#BF0603") +
+        theme_minimal() +
+        labs(title = "# of Units Per LIHTC Project, Per Year",
+             subtitle = "Charlottesville (2000-2022)",
+             x = "Year",
+             y = "Units per LIHTC Project")
+```
+</div>
+<div class = "col-md-6">
+```{r Charlottesville LIHTC Projects Analyses, continued}
+
+  # Units per project, per year, Virginia
+  
+  lihtc_va %>%
+        group_by(yr_pis) %>%
+        summarize(
+          project = n(),
+          total_units = sum(n_units)) %>%
+        mutate(units_yr = total_units / project) %>% 
+        ggplot(aes(x = yr_pis, y = units_yr)) +
+        geom_line(color = "#455767") +
+        geom_smooth(method = "lm", se = FALSE, color = "#BF0603") +
+        theme_minimal() +
+        labs(title = "# of Units Per LIHTC Project, Per Year",
+             subtitle = "Virginia (2000-2022)",
+             x = "Year",
+             y = "Units per LIHTC Project")
+  
+
+```
+</div>
+</div>
+
+## Geospatial Analyses: Building Permits
+### Leaflet Maps {.tabset}
+#### VABPS Map 1: Total Building Permits in Virginia, 2012-2023
+```{r updated leaflet maps}
+
+# Map #1: Total Building Permits in Virginia, 2012-2023
+
+pal <- colorNumeric(carto_pal(7, "Sunset"),
+                   reverse = FALSE,
+                   domain = vabps_map$bldg_sum)
+
+leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addPolygons(data = subset(vabps_map, survey_date == 2012), group = "2012",
+              fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+              weight = 2, opacity = 1, color = "white",
+              highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+              popup = ~paste0("Locality: ", county_name, "<br>",
+                              "Total Building Permits: ", bldg_sum)) %>%
+#   addPolygons(data = subset(vabps_map, survey_date == 2013), group = "2013",
+#               fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+#               weight = 2, opacity = 1, color = "white",
+#               highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+#               popup = ~paste0("Locality: ", county_name, "<br>",
+#                               "Total Building Permits: ", bldg_sum)) %>%
+#   addPolygons(data = subset(vabps_map, survey_date == 2014), group = "2014",
+#               fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+#               weight = 2, opacity = 1, color = "white",
+#               highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+#               popup = ~paste0("Locality: ", county_name, "<br>",
+#                               "Total Building Permits: ", bldg_sum)) %>%
+#   addPolygons(data = subset(vabps_map, survey_date == 2015), group = "2015",
+#               fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+#               weight = 2, opacity = 1, color = "white",
+#               highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+#               popup = ~paste0("Locality: ", county_name, "<br>",
+#                               "Total Building Permits: ", bldg_sum)) %>%
+#   addPolygons(data = subset(vabps_map, survey_date == 2016), group = "2016",
+#               fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+#               weight = 2, opacity = 1, color = "white",
+#               highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+#               popup = ~paste0("Locality: ", county_name, "<br>",
+#                               "Total Building Permits: ", bldg_sum)) %>%
+  # addPolygons(data = subset(vabps_map, survey_date == 2017), group = "2017",
+  #             fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+  #             weight = 2, opacity = 1, color = "white",
+  #             highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+  #             popup = ~paste0("Locality: ", county_name, "<br>",
+  #                             "Total Building Permits: ", bldg_sum)) %>%
+  addPolygons(data = subset(vabps_map, survey_date == 2018), group = "2018",
+              fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+              weight = 2, opacity = 1, color = "white",
+              highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+              popup = ~paste0("Locality: ", county_name, "<br>",
+                              "Total Building Permits: ", bldg_sum)) %>%
+#   addPolygons(data = subset(vabps_map, survey_date == 2019), group = "2019",
+#               fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+#               weight = 2, opacity = 1, color = "white",
+#               highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+#               popup = ~paste0("Locality: ", county_name, "<br>",
+#                               "Total Building Permits: ", bldg_sum)) %>%
+#   addPolygons(data = subset(vabps_map, survey_date == 2020), group = "2020",
+#               fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+#               weight = 2, opacity = 1, color = "white",
+#               highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+#               popup = ~paste0("Locality: ", county_name, "<br>",
+#                               "Total Building Permits: ", bldg_sum)) %>%
+#   addPolygons(data = subset(vabps_map, survey_date == 2021), group = "2021",
+#               fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+#               weight = 2, opacity = 1, color = "white",
+#               highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+#               popup = ~paste0("Locality: ", county_name, "<br>",
+#                               "Total Building Permits: ", bldg_sum)) %>%
+#   addPolygons(data = subset(vabps_map, survey_date == 2022), group = "2022",
+#               fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+#               weight = 2, opacity = 1, color = "white",
+#               highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+#               popup = ~paste0("Locality: ", county_name, "<br>",
+#                               "Total Building Permits: ", bldg_sum)) %>%
+  addPolygons(data = subset(vabps_map, survey_date == 2023), group = "2023",
+              fillColor = ~pal(bldg_sum), fillOpacity = 0.8,
+              weight = 2, opacity = 1, color = "white",
+              highlight = highlightOptions(weight = 3, fillOpacity = 0.9, bringToFront = TRUE),
+              popup = ~paste0("Locality: ", county_name, "<br>",
+                              "Total Building Permits: ", bldg_sum)) %>%
+  addLegend("topleft", pal = pal, values = vabps_map$bldg_sum,
+            title = "Total Building Permits:", opacity = 0.7) %>%
+  addLayersControl(baseGroups = as.character(c(2012,2018,2023)),
+                   options = layersControlOptions(collapsed = FALSE))
+```
+
+#### Per Capita Building Permits in Virginia, 2023
+```{r second leaflet map}
+
+# HTML will not knit unless one map is hidden
+
+# Map #2: Per Capita Building Permits in Virginia, 2023
+
+vabps_map23 <- vabps_map %>% 
+  filter(survey_date == "2023")
+
+pal <- colorNumeric(carto_pal(7, "Sunset"), 
+                   reverse = FALSE, 
+                   domain = vabps_map$permits_per_capita)
+      
+   # Creating leaflet map:
+      
+      leaflet() %>% 
+  addProviderTiles("CartoDB.Positron") %>% 
+  addPolygons(data = vabps_map23,
+              fillColor = ~pal(permits_per_capita),  # Apply the binned color palette
+              fillOpacity = 0.8,
+              weight = 2,
+              opacity = 1,
+              color = "white",
+              highlight = highlightOptions(
+                weight = 3,
+                fillOpacity = 0.9,
+                bringToFront = T),
+              popup = paste0("Locality: ", vabps_map23$county_name, "<br>",
+                             "Building Permits per Capita: ", round(vabps_map23$permits_per_capita, 3))) %>% 
+  addLegend("topleft", pal = pal, values = vabps_map23$permits_per_capita, 
+            title = "Building Permits Per Capita:", opacity = 0.7)
+    
+
+```
+
+## Housing Market Analyses: Redfin Data Visualizations
+
+The following visualizations display trends in Redfin housing market data in Charlottesville and Albemarle County in the period from 2012 to 2024. This data is intended to complement earlier analyses examining building permit and LIHTC development trends at the local level (Charlottesville and Albemarle County). Broadly speaking, these charts tell the same story: the combination of white-hot housing demand and dwindling home supply in the Charlottesville-Albemarle region is driving rapidly increasing costs. This trend is visible in growth in median annual home sale prices, and in the plummeting average annual inventory of homes (particularly in Albemarle County).
+
+<div class = "row">
+<div class = "col-md-6">
+### Median Home Sale Price
+```{r redfin visualizations - 1}
+
+# Median Annual Home Sale Price
+
+redfin_local %>% 
+        group_by(year, locality) %>%
+        ggplot(aes(x = year, y = median_sale_price_yr)) +
+        geom_line(aes(color = locality)) +
+        theme_minimal() +
+        scale_x_continuous(breaks = pretty_breaks()) +
+        scale_y_continuous(label = label_dollar(), breaks = pretty_breaks()) +
+        labs(title = "Median Annual Home Sale Price",
+             subtitle = "Charlottesville & Albemarle County (2012-2024); Redfin",
+             x = "Year",
+             y = "Median Annual Home Sale Price")
+```
+</div>
+
+<div class = "col-md-6">
+### Total Homes Sold Per Year
+```{r redfin visualizations - 2}
+# Total homes sold per year
+
+redfin_local %>% 
+        group_by(year, locality) %>%
+        ggplot(aes(x = year, y = total_homes_sold_yr)) +
+        geom_line(aes(color = locality)) +
+        theme_minimal() +
+        scale_x_continuous(breaks = pretty_breaks()) +
+        scale_y_continuous(breaks = pretty_breaks()) +
+        labs(title = "Total Homes Sold Per Year",
+             subtitle = "Charlottesville & Albemarle County (2012-2024); Redfin",
+             x = "Year",
+             y = "Total Homes Sold")
+```
+</div>
+</div>
+
+<div class = "row">
+<div class = "col-md-6">
+### Total New Listings Per Year
+```{r redfin visualizations - 3}
+# Total new listings per year
+
+redfin_local %>% 
+        group_by(year, locality) %>%
+        ggplot(aes(x = year, y = total_new_listings_yr)) +
+        geom_line(aes(color = locality)) +
+        theme_minimal() +
+        scale_x_continuous(breaks = pretty_breaks()) +
+        scale_y_continuous(breaks = pretty_breaks()) +
+        labs(title = "Total New Listings Per Year",
+             subtitle = "Charlottesville & Albemarle County (2012-2024); Redfin",
+             x = "Year",
+             y = "Total New Listings")
+
+```
+</div>
+
+<div class = "col-md-6">
+### Average Inventory Per Year
+```{r redfin visualizations - 4}
+# Average inventory per year
+
+redfin_local %>% 
+        group_by(year, locality) %>%
+        ggplot(aes(x = year, y = avg_inventory_yr)) +
+        geom_line(aes(color = locality)) +
+        theme_minimal() +
+        scale_x_continuous(breaks = pretty_breaks()) +
+        scale_y_continuous(breaks = pretty_breaks()) +
+        labs(title = "Average Annual Inventory",
+             subtitle = "Charlottesville & Albemarle County (2012-2024); Redfin",
+             x = "Year",
+             y = "Average Annual Inventory")
+```
+</div>
+</div>
+
+### Average Days on the Market Per Year
+```{r redfin visualizations - 5}
+# Average days on the market per year
+
+redfin_local %>% 
+        group_by(year, locality) %>%
+        ggplot(aes(x = year, y = avg_days_on_market_yr)) +
+        geom_line(aes(color = locality)) +
+        theme_minimal() +
+        scale_x_continuous(breaks = pretty_breaks()) +
+        scale_y_continuous(breaks = pretty_breaks()) +
+        labs(title = "Average Annual Days on the Market for Listings",
+             subtitle = "Charlottesville & Albemarle County (2012-2024); Redfin",
+             x = "Year",
+             y = "Average Annual Days on the Market")
+
+
+```
+
+### Per-Capita Redfin Data Visualizations
+
+The chart included below visualizes home sales and new listings in Charlottesville and Albemarle County in 2023, adjusting values for population. Creating this visualization involved joining tidycensus data for each locality in the same period to the Redfin dataframe. For each locality, annual homes sold and new listings are divided by total population (all for 2023). Though having adjusted per-capita estimates for this chart is helpful, this visualization largely reinforces the trends visible in the other Redfin charts. It is interesting to note that Albemarle County's per capita housing supply appears much higher than in Charlottesville. Interpreting the numbers visible in this graph reveals the stark undersupply of housing: Charlottesville's rate of new listings per capita in 2023 was 0.01, meaning there was only 1 new home listing that year for every 100 people.
+
+```{r per capita values (Redfin & Tidycensus data)}
+
+# Filter to 2023, pivot longer
+
+redfin_2023_long <- redfin_local_pop %>%
+  filter(year == 2023) %>%
+  select(locality, per_cap_homes_sold_yr, per_cap_total_new_listings_yr) %>%
+  pivot_longer(cols = starts_with("per_cap"),
+               names_to = "measure",
+               values_to = "per_capita_value") %>%
+  mutate(metric = case_when(
+    measure == "per_cap_homes_sold_yr" ~ "Homes Sold Per Capita",
+    measure == "per_cap_total_new_listings_yr" ~ "New Listings Per Capita"
+  ))
+
+# Per Capita Home Sales & Listings in 2023 (Cville & Albemarle)
+
+ggplot(redfin_2023_long, aes(x = metric, y = per_capita_value, fill = locality)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  geom_text(aes(label = round(per_capita_value, 3)),
+            position = position_dodge(width = 0.7),
+            vjust = -0.5,
+            size = 3.5,
+            color = "black") +
+  theme_minimal() +
+  labs(
+    title = "Per Capita Home Listings and Sales",
+    subtitle = "Charlottesville & Albemarle County (2023); Redfin",
+    x = NULL,
+    y = "Rate Per Capita",
+    fill = "Locality"
+  ) +
+  scale_y_continuous(breaks = pretty_breaks()) +
+  theme(axis.text.x = element_text(size = 11))
+
+
+
+```
+
+
+# Policy Implications
+Our analyses suggest that there is an extant need for commonsense housing policy interventions at the state and local levels. Given the lack of affordable housing options and the rapid rise in housing prices statewide, increasing and preserving housing affordability is critical (Emmanuel, 2024). Community land trusts provide a powerful means of asserting community control over limited affordable housing resources (Mayer, 2022). Government subsidies can help promote affordability at the individual and community levels: these might take the form of housing vouchers or renter tax credits for individuals, and inclusionary zoning policies at the city level (NYU Furman Center, 2025; CBPP, 2017; Wang & Balachandran, 2021). Inclusionary zoning policies can offer density bonuses or other incentives to make creating new units more feasible for developers (Wang & Balachandran, 2021). Next, we see potential benefits from reforming zoning policies to eliminate single-family exclusive restrictions and promote mixed-use development by allowing accessory dwelling units and higher-density housing projects (Schuetz & Devens, 2024; Dougherty, 2024). Efforts to implement such reforms have already taken shape in regional population hubs, most notably Arlington and Alexandria, where more flexible zoning practices have led to increased multi-family construction; however, a statewide implementation may be effective in addressing broader affordability challenges through expanding the housing supply (Mieleszko, 2023). Additionally, streamlining the permitting process and revising onerous design standards to simplify development and lower costs could be effective (NYU Furman Center, 2021). These types of reforms have proven effective across the Commonwealth's urban corridors, suggesting that a state-level overhaul could significantly reduce bureaucratic delays and encourage cost-effective housing development. Though our analyses did not explicitly address evictions or gentrification-driven displacements, we do recommend pursuing local and state-level policies to promote housing stability. Possible interventions might include a state-wide just-cause eviction policy (banning evictions without ‘good cause’), local eviction prevention programs (like Charlottesville’s Pathways Fund for emergency rental assistance), and right-to-counsel initiatives (like Richmond’s recent pilot program) (Cohen, 2023; NLIHC, 2024; City of Charlottesville, n.d.).
+
+# Future Orientation
+While our work over the course of this semester has helped us gain a more complete understanding of housing development and housing market trends in Virginia, this project has yielded far more questions than answers. We hope that the foundation we’ve established this semester can help inform the work of future Public Interest Data project groups investigating this topic. Questions to inform future building permit and housing market data projects might include:
+
+1. What is the specific relationship between zoning codes and permitting for new housing? How does the adoption of a new zoning ordinance and elimination of single-family-exclusive zoning change permitting trends?
+2. How do commuting trends intersect with housing development trends? Does more new housing tend to get built in ‘commuter suburbs’ than urban cores?
+3. How will global economic disruptions (like the recent tariffs) impact housing development trends in Virginia?
+4. What amount of new housing construction is composed of luxury units?
+
+Though we would have liked to have explored these questions (and others) this semester, we look forward to the exciting work future groups will undertake, guided by our initial analysis.
+
+# References
+Cai, Q., Tippett, R. (2015). Housing-Unit Method in Comparison: The Virginia Case. In: Hoque, M., B. Potter, L. (eds) Emerging Techniques in Applied Demography. Applied Demography Series, vol 4, pp 81-92. Springer, Dordrecht. https://doi.org/10.1007/978-94-017-8990-5_7
+
+Center on Budget and Policy Priorities (CBPP). (2017, March 9). Renters' credit would help low-wage workers, seniors, and people with disabilities afford housing. https://www.cbpp.org/research/housing/renters-credit-would-help-low-wage-workers-seniors-and-people-with-disabilities
+
+City of Charlottesville. (n.d). Community Resource Hotline | Charlottesville, VA. Retrieved April 15, 2025, from https://www.charlottesville.gov/1099/Community-Resource-Hotline. 
+
+Cohen, R. (2023, May 1). The fight for “good cause” housing laws to prevent renter Evictions. Vox.
+https://www.vox.com/policy/2023/5/1/23697209/landlords-tenants-good-cause-just-cause-eviction-housing
+
+Dougherty, C. (2024, March 27). America’s Affordable Housing Crisis. The New York Times. https://www.nytimes.com/2024/03/27/briefing/affordable-housing-crisis.html.
+
+Emmanuel, D. (2024). The Preservation of Affordable Housing. The National Low
+Income Housing Coalition. https://nlihc.org/sites/default/files/AG-2024/6-15_The-Preservation-of-Affordable-Housing.pdf
+
+Glaeser, E. L. & Gyourko, J. (2002). The Impact of Zoning on Housing Authority. National Bureau of Economic Research, Working Paper Series 8835. https://www.nber.org/system/files/working_papers/w8835/w8835.pdf 
+
+Goggin, B. (2018). Measuring the Length of the Housing Development Review Process in San Francisco. UC Berkeley Department of City and Regional Planning. https://ternercenter.berkeley.edu/wp-content/uploads/2018/07/Goggin_Permitting_Timelines_July_2018.pdf 
+
+Gregory, V. & Bloodworth, K. (2024). Examining Recent Patterns in Residential Building Permits. The Federal Reserve Bank of St. Louis. https://www.stlouisfed.org/on-the-economy/2024/nov/examining-recent-patterns-residential-building-permits
+
+Local Housing Solutions. (2025). Key steps to develop a local housing strategy. Abt Associates and NYU Furman Center. https://localhousingsolutions.org/plan/key-steps-to-develop-a-local-housing-strategy/ 
+
+Lukavec, M., Čáp, V., & Čermáková, K. . (2024). How permitting process length influences development costs and real estate prices. Economics and Environment, 89(2), 768. https://doi.org/10.34659/eis.2024.89.2.768 
+
+Mayer, L. (2022, April 4). Community Land Trust is planting the roots of housing affordability. CNU Public Square. https://www.cnu.org/publicsquare/2022/04/04/community-land-trust-planting-roots-housing-affordability
+
+Mieleszko, A. (2023, December 1). Alexandria, VA, Says Goodbye to Exclusionary
+Zoning. Strong Towns. https://www.strongtowns.org/journal/2023/12/1/alexandria-virginia-says-goodbye-to-exclusionary-zoning
+
+National Low Income Housing Coalition (NLIHC). (2024, October 21). Richmond
+Passes Resolution to Support Tenants’ Access to Legal Representation in Eviction Filings.
+https://nlihc.org/resource/richmond-passes-resolution-support-tenants-access-legal-representation-eviction-filings
+
+NYU Furman Center. (2025). The use of housing choice vouchers in New York City.
+https://furmancenter.org/thestoop/entry/the-use-of-housing-choice-vouchers-in-new-york-city
+
+NYU Furman Center. (2021, May 17). Streamlined permitting processes.
+https://localhousingsolutions.org/housing-policy-library/streamlined-permitting-processes/
+
+Puentes, R. (2005). Housing: the Critical Issue for Virginia’s Future. Brookings Institution. 
+https://www.brookings.edu/wp-content/uploads/2016/06/20051205_Vahousing.pdf 
+
+Schuetz, J. & Devens, E. (2024, April 29). ADUs could expand the affordable housing toolkit—if local governments can work through some growing pains. Brookings. https://www.brookings.edu/articles/adus-could-expand-the-affordable-housing-toolkit-if-local-governments-can-work-through-some-growing-pains/
+
+The Housing Solutions Lab; NYU Furman Center. (2024). Data visualization: Transforming local housing data into engaging visual narratives. https://localhousingsolutions.org/housing-policy-case-studies/data-visualization-transforming-local-housing-data-into-engaging-visual-narratives/
+
+U.S. Census Bureau. (2020). TIGER/Line shapefiles: Counties (and equivalent). U.S. Department of Commerce. https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2020&layergroup=Counties+%28and+equivalent%29 
+
+U.S. Census Bureau. (2025). Building Permits Survey. https://www.census.gov/construction/bps/index.html 
+
+U.S. Department of Housing and Urban Development Office of Policy Development and Research. (2006). U.S. Housing Market Conditions, 4th Quarter 2005. https://www.huduser.gov/periodicals/ushmc/winter05/USHMC_05Q4_summary.pdf 
+
+Virginia Department of Housing and Community Development. (2022). HB854 Statewide Housing Study: Current Efforts, Future Needs, New Strategies. https://dmz1.dhcd.virginia.gov/HB854/pdf/hb854-full-report-print.pdf 
+
+Virginia Department of Housing and Community Development. (2022). HB854 Statewide Housing Study: Part 3 - Housing Inventory and Production. Retrieved from https://dmz1.dhcd.virginia.gov/hb854/part-3-inventory.html 
+
+Wang, R., & Balachandran, S. (2021). Inclusionary housing in the United States: dynamics of local policy and outcomes in diverse markets. Housing Studies, 38(6), 1068–1087. https://doi.org/10.1080/02673037.2021.1929863
+
+Weldon Cooper Center for Public Service. (2025). Virginia Intercensal Estimates, 2000–2010 [Data file]. University of Virginia. https://www.coopercenter.org/sites/default/files/2025-01/VA-Intercensal-Estimates_2000-2010.xls 
+
+Weldon Cooper Center for Public Service. (2025). Virginia Intercensal Estimates, 2010–2020 (Updated January 2023) [Data file]. University of Virginia. https://www.coopercenter.org/sites/default/files/2025-01/VA-Intercensal-Estimates_2010-2020_UVA-CooperCenter_Updated-2023-01.xlsx 
+
+Weldon Cooper Center for Public Service. (2025). Virginia Intercensal Estimates, 2020–2024 [Data file]. University of Virginia. https://www.coopercenter.org/sites/default/files/2025-01/VA-Intercensal-Estimates_2020-2024_UVA-CooperCenter.xlsx 
+
+Zillow Group. (2025). ZHVI All Homes (SFR, Condo/Co-op) Time Series, Smoothed, Seasonally Adjusted ($): Metro & U.S. https://www.zillow.com/research/data/ 
