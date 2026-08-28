@@ -1,4 +1,4 @@
-# Team projects
+# Public Interest Data: Ethics & Practice Projects, 2025
 
 Final deliverables for Public Interest Data: Ethics & Practice
 
